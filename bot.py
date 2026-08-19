@@ -43,12 +43,12 @@ def duration_menu():
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
     welcome_text = (
-        "👋 👋 **Welcome to ◾ MAGNATE AI!**\n\n"
+        "👋 Welcome to MAGNATE AI!\n\n"
         "Send a fresh candlestick-chart screenshot and the bot will return a "
         "probability-based recommendation: UP, DOWN, or SKIP.\n\n"
-        "👇 **Choose an option from the menu below.**"
+        "👇 Choose an option from the menu below."
     )
-    bot.reply_to(message, welcome_text, parse_mode="Markdown", reply_markup=main_menu())
+    bot.reply_to(message, welcome_text, reply_markup=main_menu())
 
 @bot.message_handler(func=lambda m: m.text == "🔙 Back")
 def handle_back(message):
@@ -60,9 +60,9 @@ def start_trading(message):
     user_data[message.chat.id] = {'state': 'WAITING_BALANCE'}
     msg = (
         "Set your balance before requesting a signal.\n\n"
-        "💰 **Enter your current balance. Example: 1000**"
+        "💰 Enter your current balance. Example: 1000"
     )
-    bot.reply_to(message, msg, parse_mode="Markdown")
+    bot.reply_to(message, msg)
 
 @bot.message_handler(func=lambda m: user_data.get(m.chat.id, {}).get('state') == 'WAITING_BALANCE')
 def save_balance(message):
@@ -81,20 +81,20 @@ def save_balance(message):
         
         bankroll_card = (
             "✅ Balance saved and the Martingale cycle was reset.\n\n"
-            "💰 **BANKROLL & MONEY MANAGEMENT**\n"
+            "💰 BANKROLL & MONEY MANAGEMENT\n"
             "━━━━━━━━━━━━━━━━━━━━\n"
-            f"**Balance:** {balance:,.2f} USD\n"
-            "**Platform payout:** 92%\n"
-            "**Base stake:** 10%\n"
-            f"**Martingale step:** BASE · 0/15\n"
-            f"**Cycle profit target:** {base_stake * 0.92:,.2f} USD\n\n"
-            f"🎯 **Next stake:** {base_stake:,.2f} USD\n"
-            "**Share of current balance:** 10%\n\n"
-            "**Statistics:** ✅ 0 · ❌ 0\n"
-            "**Net result:** 0.00 USD\n\n"
-            "⚠️ _Large-stake limits are disabled. The bot stops the cycle only after step 15 or when the required stake exceeds the balance._"
+            f"Balance: {balance:,.2f} USD\n"
+            "Platform payout: 92%\n"
+            "Base stake: 10%\n"
+            "Martingale step: BASE · 0/15\n"
+            f"Cycle profit target: {base_stake * 0.92:,.2f} USD\n\n"
+            f"🎯 Next stake: {base_stake:,.2f} USD\n"
+            "Share of current balance: 10%\n\n"
+            "Statistics: ✅ 0 · ❌ 0\n"
+            "Net result: 0.00 USD\n\n"
+            "⚠️ Large-stake limits are disabled. The bot stops the cycle only after step 15 or when the required stake exceeds the balance."
         )
-        bot.reply_to(message, bankroll_card, parse_mode="Markdown")
+        bot.reply_to(message, bankroll_card)
         bot.send_message(message.chat.id, "Choose the forecast duration:", reply_markup=duration_menu())
     except ValueError:
         bot.reply_to(message, "❌ Invalid number. Please enter only numbers (e.g. 1000).")
@@ -103,18 +103,18 @@ def save_balance(message):
 def handle_duration(message):
     if message.chat.id not in user_data or 'balance' not in user_data[message.chat.id]:
         user_data[message.chat.id] = {'state': 'WAITING_BALANCE'}
-        bot.reply_to(message, "⚠️ Please set your balance first.\n💰 **Enter balance (e.g. 1000):**", parse_mode="Markdown")
+        bot.reply_to(message, "⚠️ Please set your balance first.\n💰 Enter balance (e.g. 1000):")
         return
         
     user_data[message.chat.id]['duration'] = message.text
     user_data[message.chat.id]['state'] = 'AWAITING_CHART'
-    bot.reply_to(message, f"✅ Duration set to **{message.text}**.\n\n📸 **Now send a fresh chart screenshot.**", parse_mode="Markdown")
+    bot.reply_to(message, f"✅ Duration set to {message.text}.\n\n📸 Now send a fresh chart screenshot.")
 
 @bot.message_handler(content_types=['photo'])
 def analyze_chart(message):
     chat_id = message.chat.id
     if chat_id not in user_data or 'balance' not in user_data[chat_id]:
-        bot.reply_to(message, "⚠️ Set your balance before requesting a signal.\nClick **🚀 Start trading** below.", reply_markup=main_menu())
+        bot.reply_to(message, "⚠️ Set your balance before requesting a signal.\nClick 🚀 Start trading below.", reply_markup=main_menu())
         return
 
     bot.reply_to(message, "⏳ Analyzing chart screenshot, please wait...")
@@ -137,9 +137,8 @@ def analyze_chart(message):
             f"If market is choppy, flat, consolidating, or lacks a clear setup, strictly choose SKIP. "
             f"Format response strictly as:\n"
             f"Based on the chart analysis, here is your recommendation:\n\n"
-            f"* **Recommendation:** **[UP / DOWN / SKIP]**\n"
-            f"* **Confidence:** [e.g. 85% / Low if SKIP]\n"
-            f"* **Reason:** [2-3 sentences explaining market conditions, key levels, and reason for UP/DOWN/SKIP]\n"
+            f"• Recommendation: UP / DOWN / SKIP\n"
+            f"• Reason: 2-3 sentences explaining market conditions, key levels, and indicators."
         )
         
         response = client.models.generate_content(
@@ -147,29 +146,28 @@ def analyze_chart(message):
             contents=[img, prompt]
         )
         
-        res_text = response.text
+        res_text = response.text.replace('*', '') # Format conflict clear
         u = user_data[chat_id]
         
-        # अगर AI ने SKIP बोला तो स्टेक और स्टेप नहीं बढ़ेगा
         if "SKIP" in res_text.upper():
             stake_info = (
-                f"━━━━━━━━━━━━━━━━━━━━\n"
-                f"⏸️ **Status:** Trade Skipped (No Clear Pattern)\n"
-                f"🎯 **Next Stake:** {u['base_stake']:,.2f} USD\n"
-                f"📊 **Martingale Step:** Hold ({u['step']}/15)\n"
-                f"💡 _Wait for next clean setup or change asset._"
+                f"\n━━━━━━━━━━━━━━━━━━━━\n"
+                f"⏸️ Status: Trade Skipped (No Clear Pattern)\n"
+                f"🎯 Next Stake: {u['base_stake']:,.2f} USD\n"
+                f"📊 Martingale Step: Hold ({u['step']}/15)\n"
+                f"💡 Wait for next clean setup or change asset."
             )
         else:
             u['step'] += 1
             current_stake = u['base_stake'] * (2.2 ** (u['step'] - 1))
             stake_info = (
-                f"━━━━━━━━━━━━━━━━━━━━\n"
-                f"🎯 **Next Stake:** {current_stake:,.2f} USD\n"
-                f"📊 **Martingale Step:** {u['step']}/15\n"
-                f"⏱️ **Expiry:** {duration}"
+                f"\n━━━━━━━━━━━━━━━━━━━━\n"
+                f"🎯 Next Stake: {current_stake:,.2f} USD\n"
+                f"📊 Martingale Step: {u['step']}/15\n"
+                f"⏱️ Expiry: {duration}"
             )
             
-        bot.reply_to(message, f"{res_text}\n{stake_info}", parse_mode="Markdown")
+        bot.reply_to(message, f"{res_text}\n{stake_info}")
         
     except Exception as e:
         bot.reply_to(message, f"❌ AI Error: {e}")
@@ -180,4 +178,4 @@ def analyze_chart(message):
 if __name__ == "__main__":
     print("Magnate AI Bot running...")
     bot.polling(non_stop=True, skip_pending=True)
-                                     
+
