@@ -5,7 +5,7 @@ import telebot
 import google.generativeai as genai
 from PIL import Image
 
-# 1. Web Port Server
+# 1. Simple Web Server (Render Port Binding)
 class DummyServer(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
@@ -19,16 +19,14 @@ def run_web():
 
 threading.Thread(target=run_web, daemon=True).start()
 
-# 2. Gemini & Bot Setup
+# 2. Telegram & Gemini Config
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 GEMINI_KEY = os.getenv("GEMINI_API_KEY")
 
 genai.configure(api_key=GEMINI_KEY)
+model = genai.GenerativeModel("gemini-1.5-flash")
 
-# यहाँ मॉडल का नाम 'gemini-1.5-flash-latest' सेट किया है
-model = genai.GenerativeModel("gemini-1.5-flash-latest")
-
-bot = telebot.TeleBot(TELEGRAM_TOKEN)
+bot = telebot.TeleBot(TELEGRAM_TOKEN, threaded=False)
 
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
@@ -54,7 +52,6 @@ def handle_chart_photo(message):
         )
         
         response = model.generate_content([img, prompt])
-        
         bot.reply_to(message, response.text)
         
         if os.path.exists(image_path):
@@ -65,5 +62,5 @@ def handle_chart_photo(message):
 
 if __name__ == "__main__":
     print("Bot is running...")
-    bot.infinity_polling()
+    bot.polling(non_stop=True, skip_pending=True)
     
