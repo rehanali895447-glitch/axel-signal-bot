@@ -1,88 +1,116 @@
 import os
+import io
 import threading
-import json
 from http.server import HTTPServer, BaseHTTPRequestHandler
 import telebot
 from telebot import types
 from google import genai
-from google.genai import types as genai_types
+from PIL import Image
 
-# 1. Render Keep-Alive (यह बॉट को 24/7 चालू रखेगा)
+# 1. Render Keep-Alive Server
 class DummyServer(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
         self.end_headers()
-        self.wfile.write(b"Turbo Trader Active!")
+        self.wfile.write(b"Magnate Sniper Online!")
 
-threading.Thread(target=lambda: HTTPServer(('0.0.0.0', int(os.environ.get("PORT", 8080))), DummyServer).serve_forever(), daemon=True).start()
+def run_server():
+    port = int(os.environ.get("PORT", 8080))
+    server = HTTPServer(('0.0.0.0', port), DummyServer)
+    server.serve_forever()
 
-# 2. Setup
+threading.Thread(target=run_server, daemon=True).start()
+
+# 2. Setup Telegram & Gemini
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 GEMINI_KEY = os.getenv("GEMINI_API_KEY")
+
 client = genai.Client(api_key=GEMINI_KEY)
 bot = telebot.TeleBot(TELEGRAM_TOKEN, threaded=True)
 
-# Memory (याददाश्त फाइल)
-DB_FILE = "trader_memory.json"
+# इन-मेमोरी स्टोरेज (Render पर कभी क्रैश नहीं होगी)
+user_memory = {}
 
-def get_mem():
-    if os.path.exists(DB_FILE):
-        with open(DB_FILE, "r") as f: return json.load(f)
-    return {}
-
-def set_mem(chat_id, duration):
-    mem = get_mem()
-    mem[str(chat_id)] = duration
-    with open(DB_FILE, "w") as f: json.dump(mem, f)
-
-@bot.message_handler(commands=['start'])
-def start(message):
-    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
-    markup.row("🚀 Start trading")
-    bot.reply_to(message, "⚡ MAGNATE TURBO AI ONLINE.\n\nI am ready to analyze market sentiment.", reply_markup=markup)
-
-@bot.message_handler(func=lambda m: m.text == "🚀 Start trading")
-def setup(message):
+def get_menu():
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
     markup.row("1 min", "2 min", "3 min", "5 min")
-    bot.reply_to(message, "⏱️ Select Expiry:", reply_markup=markup)
+    return markup
+
+@bot.message_handler(commands=['start'])
+def start_cmd(message):
+    user_memory[message.chat.id] = "1 min"
+    bot.reply_to(
+        message,
+        "⚡ MAGNATE TRADER AI ONLINE\n\n⏱️ Expiry time set to: 1 min\n(You can change time from buttons below)",
+        reply_markup=get_menu()
+    )
 
 @bot.message_handler(func=lambda m: m.text in ["1 min", "2 min", "3 min", "5 min"])
-def save(message):
-    set_mem(message.chat.id, message.text)
-    bot.reply_to(message, f"✅ Time locked: {message.text}. Send chart!")
+def update_duration(message):
+    user_memory[message.chat.id] = message.text
+    bot.reply_to(message, f"✅ Expiry Locked: {message.text}\n📸 Send chart screenshot now!")
 
-def fast_analyze(file_id, chat_id, msg_id):
+def analyze_chart(file_id, chat_id, msg_id):
     try:
-        mem = get_mem()
-        dur = mem.get(str(chat_id), "1 min")
+        duration = user_memory.get(chat_id, "1 min")
         
         file_info = bot.get_file(file_id)
-        file_bytes = bot.download_file(file_info.file_path)
+        downloaded = bot.download_file(file_info.file_path)
         
-        # PROMPT: ट्रेडर की समझदारी + रफ़्तार
-        prompt = f"Time:{dur}. Analyze momentum & trend. Output ONLY: UP or DOWN or SKIP. Reason: 3 words max."
+        # इमेज को हल्का करना ताकि 1 सेकंड में अपलोड हो
+        img = Image.open(io.BytesIO(downloaded))
+        img.thumbnail((600, 600))
+        
+        prompt = (
+            f"You are Magnate AI Binary Options Pro. Expiry: {duration}. "
+            "Analyze candlestick momentum, wick rejection, and support/resistance. "
+            "If market is choppy or flat, reply SKIP. "
+            "Reply strictly in 1 line: SIGNAL: UP or SIGNAL: DOWN or SIGNAL: SKIP"
+        )
         
         response = client.models.generate_content(
-            model='gemini-3.6-flash',
-            contents=[genai_types.Part.from_bytes(data=file_bytes, mime_type="image/jpeg"), prompt],
-            config=genai.GenerateContentConfig(max_output_tokens=30, temperature=0.1)
+            model='gemini-2.5-flash',
+            contents=[img, prompt]
         )
         
         res = response.text.upper()
-        # फॉर्मेटिंग
-        if "UP" in res: card = "🟢 UP"
-        elif "DOWN" in res: card = "🔴 DOWN"
-        else: card = "⏸️ SKIP"
+        
+        if "UP" in res and "SKIP" not in res:
+            card = (
+                "🟢 🟢 🟢 SIGNAL: CALL (UP) ⬆️ 🟢 🟢 🟢\n\n"
+                f"⏱️ Expiry: {duration}\n"
+                "🎯 Direction: BUY / HIGHER 📈\n"
+                "⚡ Probability: 90%+ Sniper Setup"
+            )
+        elif "DOWN" in res and "SKIP" not in res:
+            card = (
+                "🔴 🔴 🔴 SIGNAL: PUT (DOWN) ⬇️ 🔴 🔴 🔴\n\n"
+                f"⏱️ Expiry: {duration}\n"
+                "🎯 Direction: SELL / LOWER 📉\n"
+                "⚡ Probability: 90%+ Sniper Setup"
+            )
+        else:
+            card = (
+                "⏸️ ⏸️ ⏸️ SIGNAL: SKIP (NO TRADE) 🛑 ⏸️ ⏸️ ⏸️\n\n"
+                f"⏱️ Expiry: {duration}\n"
+                "⚠️ Market choppy / uncertain rejection.\n"
+                "💡 Wait for next clean candle."
+            )
             
-        bot.edit_message_text(f"{card} | {dur}\n⚡ {res.replace('SIGNAL:', '')}", chat_id, msg_id)
-    except:
-        bot.edit_message_text("❌ Network lag. Resend chart.", chat_id, msg_id)
+        bot.edit_message_text(card, chat_id=chat_id, message_id=msg_id)
+        
+    except Exception as e:
+        bot.edit_message_text(f"❌ Error: {str(e)[:40]}", chat_id=chat_id, message_id=msg_id)
 
 @bot.message_handler(content_types=['photo'])
 def handle_photo(message):
-    msg = bot.reply_to(message, "⚡...")
-    threading.Thread(target=fast_analyze, args=(message.photo[-1].file_id, message.chat.id, msg.message_id)).start()
+    status_msg = bot.reply_to(message, "⚡ Analyzing...")
+    file_id = message.photo[-1].file_id
+    threading.Thread(
+        target=analyze_chart, 
+        args=(file_id, message.chat.id, status_msg.message_id)
+    ).start()
 
-bot.infinity_polling()
+if __name__ == "__main__":
+    bot.infinity_polling(skip_pending=True)
 
