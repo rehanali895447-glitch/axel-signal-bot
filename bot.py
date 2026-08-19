@@ -24,7 +24,6 @@ TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 GEMINI_KEY = os.getenv("GEMINI_API_KEY")
 
 genai.configure(api_key=GEMINI_KEY)
-model = genai.GenerativeModel("gemini-1.5-flash")
 
 bot = telebot.TeleBot(TELEGRAM_TOKEN, threaded=False)
 
@@ -35,11 +34,11 @@ def send_welcome(message):
 @bot.message_handler(content_types=['photo'])
 def handle_chart_photo(message):
     bot.reply_to(message, "⏳ Analyzing chart screenshot, please wait...")
+    image_path = "chart.jpg"
     try:
         file_info = bot.get_file(message.photo[-1].file_id)
         downloaded_file = bot.download_file(file_info.file_path)
         
-        image_path = "chart.jpg"
         with open(image_path, 'wb') as new_file:
             new_file.write(downloaded_file)
             
@@ -47,18 +46,33 @@ def handle_chart_photo(message):
         
         prompt = (
             "You are Magnate AI, an expert binary options trading assistant. "
-            "Analyze this chart screenshot. Look at the candles, trend, and indicators. "
-            "Give a clear recommendation: UP, DOWN, or SKIP, with a short reason."
+            "Analyze this chart screenshot. Look at the candles, trend, indicators, and support/resistance. "
+            "Give a clear recommendation: UP, DOWN, or SKIP, with a short crisp reason."
         )
         
-        response = model.generate_content([img, prompt])
-        bot.reply_to(message, response.text)
+        # ऑटो-मॉडल फॉलबैक ताकि 404 कभी न आए
+        response = None
+        models_to_try = ["gemini-2.0-flash", "gemini-1.5-flash-8b", "gemini-1.5-pro", "gemini-pro-vision"]
         
-        if os.path.exists(image_path):
-            os.remove(image_path)
+        for m in models_to_try:
+            try:
+                model_inst = genai.GenerativeModel(m)
+                response = model_inst.generate_content([img, prompt])
+                if response and response.text:
+                    break
+            except Exception:
+                continue
+                
+        if response and response.text:
+            bot.reply_to(message, response.text)
+        else:
+            bot.reply_to(message, "❌ Chart analysis failed. Please check if API key is active.")
 
     except Exception as e:
         bot.reply_to(message, f"❌ Error: {e}")
+    finally:
+        if os.path.exists(image_path):
+            os.remove(image_path)
 
 if __name__ == "__main__":
     print("Bot is running...")
