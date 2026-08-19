@@ -5,7 +5,7 @@ import telebot
 import google.generativeai as genai
 from PIL import Image
 
-# 1. Simple Web Server (Render Port Binding)
+# 1. Web Port Binding for Render
 class DummyServer(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
@@ -19,11 +19,15 @@ def run_web():
 
 threading.Thread(target=run_web, daemon=True).start()
 
-# 2. Telegram & Gemini Config
+# 2. Telegram & Gemini Setup
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 GEMINI_KEY = os.getenv("GEMINI_API_KEY")
 
+if not GEMINI_KEY:
+    print("Warning: GEMINI_API_KEY is not set!")
+
 genai.configure(api_key=GEMINI_KEY)
+model = genai.GenerativeModel("models/gemini-1.5-flash")
 
 bot = telebot.TeleBot(TELEGRAM_TOKEN, threaded=False)
 
@@ -50,26 +54,11 @@ def handle_chart_photo(message):
             "Give a clear recommendation: UP, DOWN, or SKIP, with a short crisp reason."
         )
         
-        # ऑटो-मॉडल फॉलबैक ताकि 404 कभी न आए
-        response = None
-        models_to_try = ["gemini-2.0-flash", "gemini-1.5-flash-8b", "gemini-1.5-pro", "gemini-pro-vision"]
-        
-        for m in models_to_try:
-            try:
-                model_inst = genai.GenerativeModel(m)
-                response = model_inst.generate_content([img, prompt])
-                if response and response.text:
-                    break
-            except Exception:
-                continue
-                
-        if response and response.text:
-            bot.reply_to(message, response.text)
-        else:
-            bot.reply_to(message, "❌ Chart analysis failed. Please check if API key is active.")
+        response = model.generate_content([img, prompt])
+        bot.reply_to(message, response.text)
 
     except Exception as e:
-        bot.reply_to(message, f"❌ Error: {e}")
+        bot.reply_to(message, f"❌ Google AI Error: {e}")
     finally:
         if os.path.exists(image_path):
             os.remove(image_path)
@@ -77,4 +66,5 @@ def handle_chart_photo(message):
 if __name__ == "__main__":
     print("Bot is running...")
     bot.polling(non_stop=True, skip_pending=True)
+    
     
