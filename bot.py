@@ -2,7 +2,7 @@ import os
 import threading
 from http.server import HTTPServer, BaseHTTPRequestHandler
 import telebot
-import google.generativeai as genai
+from google import genai
 from PIL import Image
 
 # 1. Web Port Binding for Render
@@ -23,12 +23,7 @@ threading.Thread(target=run_web, daemon=True).start()
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 GEMINI_KEY = os.getenv("GEMINI_API_KEY")
 
-if not GEMINI_KEY:
-    print("Warning: GEMINI_API_KEY is not set!")
-
-genai.configure(api_key=GEMINI_KEY)
-model = genai.GenerativeModel("models/gemini-1.5-flash")
-
+client = genai.Client(api_key=GEMINI_KEY)
 bot = telebot.TeleBot(TELEGRAM_TOKEN, threaded=False)
 
 @bot.message_handler(commands=['start'])
@@ -54,11 +49,15 @@ def handle_chart_photo(message):
             "Give a clear recommendation: UP, DOWN, or SKIP, with a short crisp reason."
         )
         
-        response = model.generate_content([img, prompt])
+        response = client.models.generate_content(
+            model='gemini-2.5-flash',
+            contents=[img, prompt]
+        )
+        
         bot.reply_to(message, response.text)
 
     except Exception as e:
-        bot.reply_to(message, f"❌ Google AI Error: {e}")
+        bot.reply_to(message, f"❌ AI Error: {e}")
     finally:
         if os.path.exists(image_path):
             os.remove(image_path)
@@ -66,5 +65,4 @@ def handle_chart_photo(message):
 if __name__ == "__main__":
     print("Bot is running...")
     bot.polling(non_stop=True, skip_pending=True)
-    
-    
+
