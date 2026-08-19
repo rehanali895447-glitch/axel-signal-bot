@@ -5,7 +5,7 @@ import telebot
 import google.generativeai as genai
 from PIL import Image
 
-# 1. Render को खुश रखने के लिए छोटा सा वेब सर्वर
+# 1. Web Port Server
 class DummyServer(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
@@ -17,15 +17,16 @@ def run_web():
     server = HTTPServer(('0.0.0.0', port), DummyServer)
     server.serve_forever()
 
-# बैकग्राउंड में वेब सर्वर चालू करें
 threading.Thread(target=run_web, daemon=True).start()
 
-# 2. आपका बॉट और Gemini सेटअप
+# 2. Gemini & Bot Setup
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 GEMINI_KEY = os.getenv("GEMINI_API_KEY")
 
 genai.configure(api_key=GEMINI_KEY)
-model = genai.GenerativeModel("gemini-1.5-flash")
+
+# यहाँ मॉडल का नाम 'gemini-1.5-flash-latest' सेट किया है
+model = genai.GenerativeModel("gemini-1.5-flash-latest")
 
 bot = telebot.TeleBot(TELEGRAM_TOKEN)
 
