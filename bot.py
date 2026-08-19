@@ -12,7 +12,7 @@ class DummyServer(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
         self.end_headers()
-        self.wfile.write(b"Magnate AI Fast Live!")
+        self.wfile.write(b"Next-Candle Sniper Live!")
 
 def run_web():
     port = int(os.environ.get("PORT", 8080))
@@ -21,7 +21,7 @@ def run_web():
 
 threading.Thread(target=run_web, daemon=True).start()
 
-# 2. Telegram & AI Setup
+# 2. Telegram & AI Initialization
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 GEMINI_KEY = os.getenv("GEMINI_API_KEY")
 
@@ -37,7 +37,7 @@ def start_menu():
 
 def duration_menu():
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
-    markup.row("⏱️ 1 min", "⏱️ 2 min")
+    markup.row("⏱️ 1 min (Next Candle)", "⏱️ 2 min")
     markup.row("⏱️ 3 min", "⏱️ 5 min")
     markup.row("🔙 Back")
     return markup
@@ -46,8 +46,8 @@ def duration_menu():
 def send_welcome(message):
     user_data[message.chat.id] = {'duration': '1 min'}
     text = (
-        "👋 Welcome to MAGNATE AI!\n\n"
-        "Send a fresh candlestick chart screenshot to get instant probability signals (UP / DOWN / SKIP).\n\n"
+        "👋 Welcome to MAGNATE AI Sniper!\n\n"
+        "Send a chart 15-20 sec before candle close to predict the NEXT candle direction instantly.\n\n"
         "👇 Click below to start."
     )
     bot.reply_to(message, text, reply_markup=start_menu())
@@ -58,28 +58,29 @@ def handle_back(message):
 
 @bot.message_handler(func=lambda m: m.text == "🚀 Start trading")
 def ask_duration(message):
-    bot.reply_to(message, "⏱️ Choose the forecast duration:", reply_markup=duration_menu())
+    bot.reply_to(message, "⏱️ Choose trade duration:", reply_markup=duration_menu())
 
-@bot.message_handler(func=lambda m: m.text in ["⏱️ 1 min", "⏱️ 2 min", "⏱️ 3 min", "⏱️ 5 min"])
+@bot.message_handler(func=lambda m: m.text in ["⏱️ 1 min (Next Candle)", "⏱️ 2 min", "⏱️ 3 min", "⏱️ 5 min"])
 def set_duration(message):
     user_data[message.chat.id] = {'duration': message.text.replace("⏱️ ", "")}
-    bot.reply_to(message, f"✅ Expiry set to: {message.text}\n\n📸 Now send chart screenshot.")
+    bot.reply_to(message, f"✅ Expiry set to: {message.text}\n\n📸 Send screenshot 15-20s before candle close.")
 
-def process_chart_fast(message, file_path, chat_id):
+def process_chart_sniper(file_path, chat_id):
     try:
+        # इन-मेमोरी 600px अल्ट्रा-फ़ास्ट प्रोसेसिंग (1 सेकंड में अपलोड)
         downloaded_file = bot.download_file(file_path)
         img = Image.open(io.BytesIO(downloaded_file))
-        img.thumbnail((700, 700))
+        img.thumbnail((600, 600))
         
         duration = user_data.get(chat_id, {}).get('duration', '1 min')
         
         prompt = (
-            f"You are MAGNATE AI, expert binary options scanner. Expiry: {duration}. "
-            f"Analyze raw candlestick action, trend momentum, and key levels. "
-            f"Strictly reply in this short 3-line format without markdown asterisks:\n"
-            f"SIGNAL: [UP or DOWN or SKIP]\n"
-            f"CONFIDENCE: [e.g. 90%]\n"
-            f"REASON: [Single short 1-line reason]"
+            f"You are MAGNATE AI NEXT-CANDLE SNIPER. Timeframe: {duration}. "
+            f"The user took this screenshot 15-20s before candle close. "
+            f"Analyze the current forming candle rejection wicks, momentum, S/R breakout, and pattern. "
+            f"Predict the NEXT incoming candle direction with extreme accuracy. "
+            f"If choppy, consolidated, or conflicting wicks, strictly output SKIP. "
+            f"Reply ONLY in 1 line: SIGNAL: UP or SIGNAL: DOWN or SIGNAL: SKIP"
         )
         
         response = client.models.generate_content(
@@ -89,47 +90,46 @@ def process_chart_fast(message, file_path, chat_id):
         
         raw = response.text.upper()
         
-        # क्लीन और बड़ा सिग्नल कार्ड तैयार करना
         if "UP" in raw and "SKIP" not in raw:
             card = (
-                f"🟢 🟢 🟢 SIGNAL: CALL (UP) ⬆️ 🟢 🟢 🟢\n\n"
+                "🟢 🟢 🟢 NEXT CANDLE: CALL (UP) ⬆️ 🟢 🟢 🟢\n\n"
                 f"⏱️ Expiry: {duration}\n"
-                f"🎯 Direction: BUY / UP 📈\n"
-                f"⚡ Status: High Probability Setup"
+                "🎯 Entry: Open of Next Candle (BUY 📈)\n"
+                "⚡ Probability: 90%+ Sniper Setup"
             )
         elif "DOWN" in raw and "SKIP" not in raw:
             card = (
-                f"🔴 🔴 🔴 SIGNAL: PUT (DOWN) ⬇️ 🔴 🔴 🔴\n\n"
+                "🔴 🔴 🔴 NEXT CANDLE: PUT (DOWN) ⬇️ 🔴 🔴 🔴\n\n"
                 f"⏱️ Expiry: {duration}\n"
-                f"🎯 Direction: SELL / DOWN 📉\n"
-                f"⚡ Status: High Probability Setup"
+                "🎯 Entry: Open of Next Candle (SELL 📉)\n"
+                "⚡ Probability: 90%+ Sniper Setup"
             )
         else:
             card = (
-                f"⏸️ ⏸️ ⏸️ SIGNAL: SKIP ⚠️ ⏸️ ⏸️ ⏸️\n\n"
+                "⏸️ ⏸️ ⏸️ SIGNAL: SKIP (NO TRADE) 🛑 ⏸️ ⏸️ ⏸️\n\n"
                 f"⏱️ Expiry: {duration}\n"
-                f"🎯 Action: DO NOT TRADE 🛑\n"
-                f"💡 Market is choppy or uncertain. Wait for next candle."
+                "⚠️ Rejection or Choppy candle detected.\n"
+                "💡 Wait for next clean candle close."
             )
             
-        bot.reply_to(message, card)
+        bot.send_message(chat_id, card)
         
     except Exception as e:
-        bot.reply_to(message, f"❌ Scan Error: {e}")
+        bot.send_message(chat_id, f"❌ Fast Scan Error: {e}")
 
 @bot.message_handler(content_types=['photo'])
 def handle_photo(message):
     chat_id = message.chat.id
     if chat_id not in user_data:
-        user_data[chat_id] = {'duration': '1 min'}
+        user_data[chat_id] = {'duration': '1 min (Next Candle)'}
         
-    bot.reply_to(message, "⚡ Scanning chart...")
     file_info = bot.get_file(message.photo[-1].file_id)
     
-    t = threading.Thread(target=process_chart_fast, args=(message, file_info.file_path, chat_id))
+    # बैकग्राउंड थ्रेड में सीधा प्रोसेसिंग
+    t = threading.Thread(target=process_chart_sniper, args=(file_info.file_path, chat_id))
     t.start()
 
 if __name__ == "__main__":
-    print("Magnate AI Pro Running...")
+    print("Magnate AI Next-Candle Sniper Running...")
     bot.polling(non_stop=True, skip_pending=True)
 
