@@ -1,8 +1,26 @@
 import os
+import threading
+from http.server import HTTPServer, BaseHTTPRequestHandler
 import telebot
 import google.generativeai as genai
 from PIL import Image
 
+# 1. Render को खुश रखने के लिए छोटा सा वेब सर्वर
+class DummyServer(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"Bot is Running Alive 24/7!")
+
+def run_web():
+    port = int(os.environ.get("PORT", 8080))
+    server = HTTPServer(('0.0.0.0', port), DummyServer)
+    server.serve_forever()
+
+# बैकग्राउंड में वेब सर्वर चालू करें
+threading.Thread(target=run_web, daemon=True).start()
+
+# 2. आपका बॉट और Gemini सेटअप
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 GEMINI_KEY = os.getenv("GEMINI_API_KEY")
 
@@ -47,4 +65,4 @@ def handle_chart_photo(message):
 if __name__ == "__main__":
     print("Bot is running...")
     bot.infinity_polling()
-
+    
