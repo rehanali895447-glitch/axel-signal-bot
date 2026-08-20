@@ -24,7 +24,7 @@ threading.Thread(target=run_server, daemon=True).start()
 
 # --- 2. Keys & Bot Setup ---
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN") or os.getenv("TELEGRAM_BOT_TOKEN")
-GEMINI_KEY = os.getenv("GEMINI_API_KEY")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
 bot = telebot.TeleBot(TELEGRAM_TOKEN, threaded=True)
 
@@ -134,9 +134,6 @@ def callback_inline(call):
 def analyze_chart_process(image_bytes, settings):
     b64_image = base64.b64encode(image_bytes).decode('utf-8')
     
-    # यहाँ सिर्फ वर्शन अपडेट किया गया है: gemini-3.6-flash
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key={GEMINI_KEY}"
-    
     prompt = (
         f"You are a World-Class High-Accuracy Binary Options Technical Analyst.\n"
         f"Analyze the attached trading chart screenshot carefully.\n"
@@ -153,25 +150,33 @@ def analyze_chart_process(image_bytes, settings):
         f"💡 **AI REASONING:** [Key reason for trade entry or why it was skipped]"
     )
     
+    url = "https://api.openai.com/v1/responses"
+
     payload = {
-        "contents": [{
-            "parts": [
-                {"text": prompt},
-                {
-                    "inline_data": {
-                        "mime_type": "image/jpeg",
-                        "data": b64_image
+        "model": "gpt-5.6",
+        "input": [
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "input_text",
+                        "text": prompt
+                    },
+                    {
+                        "type": "input_image",
+                        "image_url": f"data:image/jpeg;base64,{b64_image}"
                     }
-                }
-            ]
-        }],
-        "generationConfig": {
-            "maxOutputTokens": 250,
-            "temperature": 0.1
-        }
+                ]
+            }
+        ],
+        "max_output_tokens": 250
     }
     
-    headers = {"Content-Type": "application/json"}
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {OPENAI_API_KEY}"
+    }
+
     response = requests.post(url, headers=headers, json=payload, timeout=20)
     res_data = response.json()
     
@@ -179,9 +184,12 @@ def analyze_chart_process(image_bytes, settings):
         return f"❌ API Error: {res_data['error'].get('message', 'Key Error')}"
     
     try:
-        return res_data["candidates"][0]["content"]["parts"][0]["text"]
+        return res_data["output"][0]["content"][0]["text"]
     except Exception:
-        return "❌ Error: Could not accurately read chart. Please send a clearer screenshot."
+        try:
+            return res_data["output_text"]
+        except Exception:
+            return "❌ Error: Could not accurately read chart. Please send a clearer screenshot."
 
 @bot.message_handler(content_types=['photo'])
 def handle_photo(message):
@@ -203,4 +211,3 @@ def handle_photo(message):
 if __name__ == "__main__":
     print("Bot is starting...")
     bot.infinity_polling()
-    
