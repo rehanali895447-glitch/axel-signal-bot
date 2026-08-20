@@ -134,7 +134,8 @@ def callback_inline(call):
 def analyze_chart_process(image_bytes, settings):
     b64_image = base64.b64encode(image_bytes).decode('utf-8')
     
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={GEMINI_KEY}"
+    # यहाँ सिर्फ वर्शन अपडेट किया गया है: gemini-3.6-flash
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key={GEMINI_KEY}"
     
     prompt = (
         f"You are a World-Class High-Accuracy Binary Options Technical Analyst.\n"
