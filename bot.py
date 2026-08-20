@@ -7,9 +7,8 @@ import threading
 from http.server import HTTPServer, BaseHTTPRequestHandler
 import telebot
 from telebot import types
-from PIL import Image
 
-# --- 1. Render Keep-Alive Port Binding (No Deploy Fail) ---
+# --- 1. Render Keep-Alive Port Binding ---
 class DummyServer(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
@@ -23,13 +22,12 @@ def run_server():
 
 threading.Thread(target=run_server, daemon=True).start()
 
-# --- 2. Bot & Gemini Setup ---
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+# --- 2. Keys & Bot Setup ---
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN") or os.getenv("TELEGRAM_BOT_TOKEN")
 GEMINI_KEY = os.getenv("GEMINI_API_KEY")
 
 bot = telebot.TeleBot(TELEGRAM_TOKEN, threaded=True)
 
-# डिफ़ॉल्ट सेटिंग्स (App UI के अनुसार)
 user_settings = {}
 
 def get_default_settings():
@@ -40,10 +38,10 @@ def get_default_settings():
         "asset": "Asia Composite / OTC (85%-90%)"
     }
 
-# --- मेन्यू कीबोर्ड्स ---
+# --- 3. Keyboards & Menu ---
 def main_menu():
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
-    markup.add("⏱️ Duration", "📊 Indicator", "🛡️ Strategy", "⚙️ Current Settings")
+    markup.add("⏱ Duration", "📊 Indicator", "🛡 Strategy", "⚙️ Current Settings")
     return markup
 
 def duration_menu():
@@ -70,175 +68,138 @@ def indicator_menu():
 def strategy_menu():
     markup = types.InlineKeyboardMarkup(row_width=1)
     markup.add(
-        types.InlineKeyboardButton("🛡️ Conservative (Low Risk)", callback_data="strat_Conservative (Low Risk)"),
-        types.InlineKeyboardButton("♞ Optimal (Medium Risk)", callback_data="strat_Optimal (Medium Risk)"),
+        types.InlineKeyboardButton("🛡 Conservative (Low Risk)", callback_data="strat_Conservative (Low Risk)"),
+        types.InlineKeyboardButton("⚖️ Optimal (Medium Risk)", callback_data="strat_Optimal (Medium Risk)"),
         types.InlineKeyboardButton("⚡ Aggressive (High Risk)", callback_data="strat_Aggressive (High Risk)")
     )
     return markup
 
-# --- कमांड्स और बटन्स ---
+# --- 4. Bot Commands & Settings Handlers ---
 @bot.message_handler(commands=['start'])
 def start_cmd(message):
-    user_settings[message.chat.id] = get_default_settings()
+    user_id = message.chat.id
+    if user_id not in user_settings:
+        user_settings[user_id] = get_default_settings()
+    
+    st = user_settings[user_id]
     text = (
-        "🤖 **MAGNATE ROBOT PRO ONLINE**\n\n"
-        "📱 **Current Robot Settings:**\n"
-        f"⏱️ Duration: `1 min`\n"
-        f"📊 Indicator: `MACD`\n"
-        f"♞ Strategy: `Optimal (Medium risk)`\n\n"
-        "📸 **बस चार्ट का स्क्रीनशॉट भेजें, बॉट तुरंत सिग्नल देगा!**"
+        f"⚙️ *Active Configuration:*\n"
+        f"• ⏱ *Duration:* {st['duration']}\n"
+        f"• 📊 *Indicator Focus:* {st['indicator']}\n"
+        f"• 🛡 *Strategy:* {st['strategy']}\n"
+        f"• 📈 *Asset Target:* {st['asset']}"
     )
-    bot.reply_to(message, text, reply_markup=main_menu(), parse_mode="Markdown")
+    bot.send_message(user_id, text, parse_mode="Markdown", reply_markup=main_menu())
 
-@bot.message_handler(func=lambda m: m.text == "⏱️ Duration")
+@bot.message_handler(func=lambda msg: msg.text == "⏱ Duration")
 def set_duration(message):
-    bot.reply_to(message, "⏱️ **Select Trading Duration:**", reply_markup=duration_menu(), parse_mode="Markdown")
+    bot.send_message(message.chat.id, "Select trading duration:", reply_markup=duration_menu())
 
-@bot.message_handler(func=lambda m: m.text == "📊 Indicator")
+@bot.message_handler(func=lambda msg: msg.text == "📊 Indicator")
 def set_indicator(message):
-    bot.reply_to(message, "📊 **Select Technical Indicator:**", reply_markup=indicator_menu(), parse_mode="Markdown")
+    bot.send_message(message.chat.id, "Select primary indicator:", reply_markup=indicator_menu())
 
-@bot.message_handler(func=lambda m: m.text == "🛡️ Strategy")
+@bot.message_handler(func=lambda msg: msg.text == "🛡 Strategy")
 def set_strategy(message):
-    bot.reply_to(message, "🛡️ **Select Risk Management Strategy:**", reply_markup=strategy_menu(), parse_mode="Markdown")
+    bot.send_message(message.chat.id, "Select strategy risk profile:", reply_markup=strategy_menu())
 
-@bot.message_handler(func=lambda m: m.text == "⚙️ Current Settings")
+@bot.message_handler(func=lambda msg: msg.text == "⚙️ Current Settings")
 def view_settings(message):
-    cfg = user_settings.get(message.chat.id, get_default_settings())
-    text = (
-        "⚙️ **Active Configuration:**\n"
-        f"• ⏱️ **Duration:** {cfg['duration']}\n"
-        f"• 📊 **Indicator Focus:** {cfg['indicator']}\n"
-        f"• 🛡️ **Strategy:** {cfg['strategy']}\n"
-        f"• 📈 **Asset Target:** {cfg['asset']}"
-    )
-    bot.reply_to(message, text, parse_mode="Markdown")
+    start_cmd(message)
 
-# --- इनलाइन बटन्स हैंडलर ---
 @bot.callback_query_handler(func=lambda call: True)
 def callback_inline(call):
-    if call.message.chat.id not in user_settings:
-        user_settings[call.message.chat.id] = get_default_settings()
-        
-    if call.data.startswith("dur_"):
-        val = call.data.split("_")[1]
-        user_settings[call.message.chat.id]["duration"] = val
-        bot.answer_callback_query(call.id, f"Duration set: {val}")
-        bot.edit_message_text(f"✅ Duration Locked: **{val}**", call.message.chat.id, call.message.message_id, parse_mode="Markdown")
-        
-    elif call.data.startswith("ind_"):
-        val = call.data.split("_")[1]
-        user_settings[call.message.chat.id]["indicator"] = val
-        bot.answer_callback_query(call.id, f"Indicator set: {val}")
-        bot.edit_message_text(f"✅ Indicator Locked: **{val}**", call.message.chat.id, call.message.message_id, parse_mode="Markdown")
-        
-    elif call.data.startswith("strat_"):
-        val = call.data.split("_")[1]
-        user_settings[call.message.chat.id]["strategy"] = val
-        bot.answer_callback_query(call.id, f"Strategy set: {val}")
-        bot.edit_message_text(f"✅ Strategy Locked: **{val}**", call.message.chat.id, call.message.message_id, parse_mode="Markdown")
+    user_id = call.message.chat.id
+    if user_id not in user_settings:
+        user_settings[user_id] = get_default_settings()
+    
+    data = call.data
+    if data.startswith("dur_"):
+        val = data.replace("dur_", "")
+        user_settings[user_id]["duration"] = val
+        bot.answer_callback_query(call.id, f"Duration: {val}")
+        bot.send_message(user_id, f"✅ Duration Locked: {val}")
+    elif data.startswith("ind_"):
+        val = data.replace("ind_", "")
+        user_settings[user_id]["indicator"] = val
+        bot.answer_callback_query(call.id, f"Indicator: {val}")
+        bot.send_message(user_id, f"✅ Indicator Locked: {val}")
+    elif data.startswith("strat_"):
+        val = data.replace("strat_", "")
+        user_settings[user_id]["strategy"] = val
+        bot.answer_callback_query(call.id, f"Strategy: {val}")
+        bot.send_message(user_id, f"✅ Strategy Locked: {val}")
 
-# --- चार्ट एनालिसिस और सिग्नल जनरेटर ---
-def analyze_chart_process(file_id, chat_id, msg_id):
-    try:
-        cfg = user_settings.get(chat_id, get_default_settings())
-        
-        file_info = bot.get_file(file_id)
-        downloaded = bot.download_file(file_info.file_path)
-        
-        img = Image.open(io.BytesIO(downloaded)).convert('RGB')
-        img.thumbnail((600, 600))
-        
-        buf = io.BytesIO()
-        img.save(buf, format='JPEG', quality=85)
-        base64_image = base64.b64encode(buf.getvalue()).decode('utf-8')
-        
-        prompt = (
-            f"You are Magnate AI Pro Binary Options Robot. "
-            f"Active Settings: Expiry={cfg['duration']}, Technical Indicator Focus={cfg['indicator']}, Strategy Mode={cfg['strategy']}. "
-            "Analyze candlestick momentum, trend direction, support/resistance, and indicator behavior on this chart. "
-            "Strict Rule: If market is choppy/unclear, reply SKIP. "
-            "Reply strictly in this EXACT format:\n"
-            "SIGNAL: [UP or DOWN or SKIP]\n"
-            "CONFIDENCE: [Percentage like 92%]\n"
-            "ANALYSIS: [Short 1-sentence reason]"
-        )
-        
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={GEMINI_KEY}"
-        headers = {"Content-Type": "application/json"}
-        payload = {
-            "contents": [{
-                "parts": [
-                    {"text": prompt},
-                    {"inline_data": {"mime_type": "image/jpeg", "data": base64_image}}
-                ]
-            }],
-            "generationConfig": {"temperature": 0.1, "maxOutputTokens": 100}
+# --- 5. High-Accuracy AI Analysis Engine ---
+def analyze_chart_process(image_bytes, settings):
+    b64_image = base64.b64encode(image_bytes).decode('utf-8')
+    
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={GEMINI_KEY}"
+    
+    prompt = (
+        f"You are a World-Class High-Accuracy Binary Options Technical Analyst.\n"
+        f"Analyze the attached trading chart screenshot carefully.\n"
+        f"Settings: Duration={settings.get('duration', '1 min')}, Indicator={settings.get('indicator', 'MACD')}, Strategy={settings.get('strategy', 'Optimal')}.\n\n"
+        f"CRITICAL TRADING RULES:\n"
+        f"1. Check Trend, S/R Levels, Candlestick Price Action, and Indicator confirmation.\n"
+        f"2. If the market is choppy, sideways, uncertain, or indicators show no clear confirmation, YOU MUST OUTPUT 'SKIPPED ⚪'.\n"
+        f"3. Only give 'CALL (UP) 🟢' or 'PUT (DOWN) 🔴' if the setup has clear high accuracy.\n\n"
+        f"Provide direct output strictly in this clean format:\n"
+        f"🎯 **SIGNAL:** [CALL (UP) 🟢 / PUT (DOWN) 🔴 / SKIPPED ⚪]\n"
+        f"🔥 **CONFIDENCE:** [Percentage]%\n"
+        f"⏱ **TIMEFRAME:** {settings.get('duration', '1 min')}\n"
+        f"📈 **TREND & S/R:** [Short analysis of Trend and Support/Resistance level]\n"
+        f"💡 **AI REASONING:** [Key reason for trade entry or why it was skipped]"
+    )
+    
+    payload = {
+        "contents": [{
+            "parts": [
+                {"text": prompt},
+                {
+                    "inline_data": {
+                        "mime_type": "image/jpeg",
+                        "data": b64_image
+                    }
+                }
+            ]
+        }],
+        "generationConfig": {
+            "maxOutputTokens": 250,
+            "temperature": 0.1
         }
-        
-        response = requests.post(url, headers=headers, json=payload, timeout=20)
-        data = response.json()
-        
-        raw_text = data['candidates'][0]['content']['parts'][0]['text'].strip()
-        lines = raw_text.split("\n")
-        
-        signal = "SKIP"
-        conf = "85%"
-        reason = "Market consolidating"
-        
-        for line in lines:
-            if "SIGNAL:" in line.upper():
-                if "UP" in line.upper(): signal = "CALL (UP) ⬆️"
-                elif "DOWN" in line.upper(): signal = "PUT (DOWN) ⬇️"
-                else: signal = "SKIP (NO TRADE) 🛑"
-            elif "CONFIDENCE:" in line.upper():
-                conf = line.split(":")[-1].strip()
-            elif "ANALYSIS:" in line.upper():
-                reason = line.split(":")[-1].strip()
-
-        if "UP" in signal:
-            card = (
-                "🟢 🟢 🟢 **MAGNATE ROBOT SIGNAL** 🟢 🟢 🟢\n\n"
-                f"🎯 **Direction:** `BUY / CALL 📈`\n"
-                f"⏱️ **Duration:** `{cfg['duration']}`\n"
-                f"📊 **Indicator:** `{cfg['indicator']}`\n"
-                f"🛡️ **Strategy:** `{cfg['strategy']}`\n"
-                f"⚡ **Confidence:** `{conf}`\n\n"
-                f"💡 **Reason:** {reason}"
-            )
-        elif "DOWN" in signal:
-            card = (
-                "🔴 🔴 🔴 **MAGNATE ROBOT SIGNAL** 🔴 🔴 🔴\n\n"
-                f"🎯 **Direction:** `SELL / PUT 📉`\n"
-                f"⏱️ **Duration:** `{cfg['duration']}`\n"
-                f"📊 **Indicator:** `{cfg['indicator']}`\n"
-                f"🛡️ **Strategy:** `{cfg['strategy']}`\n"
-                f"⚡ **Confidence:** `{conf}`\n\n"
-                f"💡 **Reason:** {reason}"
-            )
-        else:
-            card = (
-                "⏸️ ⏸️ ⏸️ **MAGNATE ROBOT: SKIP** ⏸️ ⏸️ ⏸️\n\n"
-                f"⏱️ **Duration:** `{cfg['duration']}`\n"
-                f"⚠️ **Market Choppy / Low Accuracy Setup**\n"
-                f"💡 **Reason:** {reason}\n"
-                "🛑 **Next clear candle ka wait karein.**"
-            )
-            
-        bot.edit_message_text(card, chat_id=chat_id, message_id=msg_id, parse_mode="Markdown")
-        
-    except Exception as e:
-        bot.edit_message_text(f"❌ Error: {str(e)[:45]}", chat_id=chat_id, message_id=msg_id)
+    }
+    
+    headers = {"Content-Type": "application/json"}
+    response = requests.post(url, headers=headers, json=payload, timeout=20)
+    res_data = response.json()
+    
+    if "error" in res_data:
+        return f"❌ API Error: {res_data['error'].get('message', 'Key Error')}"
+    
+    try:
+        return res_data["candidates"][0]["content"]["parts"][0]["text"]
+    except Exception:
+        return "❌ Error: Could not accurately read chart. Please send a clearer screenshot."
 
 @bot.message_handler(content_types=['photo'])
 def handle_photo(message):
-    status_msg = bot.reply_to(message, "⚡ **Scanning Chart with Magnate AI Engine...**", parse_mode="Markdown")
-    file_id = message.photo[-1].file_id
-    threading.Thread(
-        target=analyze_chart_process, 
-        args=(file_id, message.chat.id, status_msg.message_id)
-    ).start()
+    user_id = message.chat.id
+    if user_id not in user_settings:
+        user_settings[user_id] = get_default_settings()
+    
+    wait_msg = bot.reply_to(message, "🧠 *Analyzing Chart with High-Accuracy AI...*", parse_mode="Markdown")
+    
+    try:
+        file_info = bot.get_file(message.photo[-1].file_id)
+        downloaded_file = bot.download_file(file_info.file_path)
+        
+        result_text = analyze_chart_process(downloaded_file, user_settings[user_id])
+        bot.edit_message_text(result_text, chat_id=user_id, message_id=wait_msg.message_id, parse_mode="Markdown")
+    except Exception as e:
+        bot.edit_message_text(f"❌ Error: {str(e)}", chat_id=user_id, message_id=wait_msg.message_id)
 
 if __name__ == "__main__":
-    bot.infinity_polling(skip_pending=True)
-        
+    print("Bot is starting...")
+    bot.infinity_polling()
+    
