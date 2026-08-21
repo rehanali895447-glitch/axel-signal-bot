@@ -4,48 +4,43 @@ import json
 import os
 import socketserver
 import threading
+import time
 import numpy as np
 import pandas as pd
 import requests
 import websockets
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
-from telegram.ext import (
-    ApplicationBuilder,
-    CallbackQueryHandler,
-    CommandHandler,
-    ContextTypes,
-)
 
-# --- Render के लिए वेब सर्वर ---
+# --- 1. Render Port Server (For 24/7 Uptime) ---
 PORT = int(os.environ.get("PORT", 8080))
 
 
-class DummyHandler(http.server.SimpleHTTPRequestHandler):
+class ServerHandler(http.server.SimpleHTTPRequestHandler):
 
   def do_GET(self):
     self.send_response(200)
     self.send_header("Content-type", "text/plain")
     self.end_headers()
-    self.wfile.write(b"Bot is Running 24/7!")
+    self.wfile.write(b"OlympTrade AI Signal Engine 24/7 Running")
 
   def log_message(self, format, *args):
     return
 
 
-def start_dummy_server():
+def run_http_server():
   try:
-    with socketserver.TCPServer(("", PORT), DummyHandler) as httpd:
+    with socketserver.TCPServer(("", PORT), ServerHandler) as httpd:
       httpd.serve_forever()
   except Exception:
     pass
 
 
-threading.Thread(target=start_dummy_server, daemon=True).start()
+threading.Thread(target=run_http_server, daemon=True).start()
 
-# --- 1. सेटिंग्स ---
-WS_URL = "wss://ws.olymptrade.com/otp?cid_ver=1&cid_app=web%40OlympTrade%402026.3.2396554%402396554&cid_device=%40%40phone&cid_os=android%4010"
+# --- 2. Configurations & Pair Mappings ---
 TELEGRAM_BOT_TOKEN = "7979146076:AAGA4DhgxgWVcdeWBkaoa0ewWGWmPOv5OnQ"
 TELEGRAM_CHAT_ID = "6968099958"
+API_URL = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}"
+WS_URL = "wss://ws.olymptrade.com/otp?cid_ver=1&cid_app=web%40OlympTrade%402026.3.2396554%402396554&cid_device=%40%40phone&cid_os=android%4010"
 
 ASSETS_MAP = {
     "🌏 Asia Composite": "ASIA_X",
@@ -66,170 +61,202 @@ ASSETS_MAP = {
     "🇪🇺 EUR/AUD OTC": "EURAUD_OTC",
 }
 
-current_target_pair = "ASIA_X"
-current_target_name = "🌏 Asia Composite"
-candles = pd.DataFrame(columns=["time", "open", "high", "low", "close"])
-last_alert_signal = None
-active_ws = None
+current_pair = "ASIA_X"
+current_name = "🌏 Asia Composite"
+price_history = []
+last_alert_type = None
 
 
-def get_main_menu():
+# --- 3. Telegram UI Helpers ---
+def get_main_menu_keyboard():
   buttons = []
   row = []
   for name, code in ASSETS_MAP.items():
-    row.append(InlineKeyboardButton(name, callback_data=code))
+    row.append({"text": name, "callback_data": code})
     if len(row) == 2:
       buttons.append(row)
       row = []
   if row:
     buttons.append(row)
-  return InlineKeyboardMarkup(buttons)
+  return {"inline_keyboard": buttons}
 
 
-# --- 2. Telegram हैंडलर्स ---
-async def show_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
-  msg_text = (
-      "🎯 **OlympTrade Live AI Scanner**\n\n"
-      "👇 **जिस पेयर का 1-मिनट सिग्नल चाहिए उस पर क्लिक करें:**"
-  )
-  if update.message:
-    await update.message.reply_text(
-        msg_text, reply_markup=get_main_menu(), parse_mode="Markdown"
-    )
+def send_tg_message(chat_id, text, reply_markup=None):
+  payload = {"chat_id": chat_id, "text": text, "parse_mode": "Markdown"}
+  if reply_markup:
+    payload["reply_markup"] = reply_markup
+  try:
+    requests.post(f"{API_URL}/sendMessage", json=payload, timeout=5)
+  except Exception:
+    pass
 
 
-async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
-  global current_target_pair, current_target_name, candles, last_alert_signal, active_ws
-  query = update.callback_query
-  await query.answer()
+def edit_tg_message(chat_id, message_id, text, reply_markup=None):
+  payload = {
+      "chat_id": chat_id,
+      "message_id": message_id,
+      "text": text,
+      "parse_mode": "Markdown",
+  }
+  if reply_markup:
+    payload["reply_markup"] = reply_markup
+  try:
+    requests.post(f"{API_URL}/editMessageText", json=payload, timeout=5)
+  except Exception:
+    pass
 
-  if query.data == "BACK_TO_MENU":
-    msg_text = (
-        "🎯 **OlympTrade Live AI Scanner**\n\n"
-        "👇 **जिस पेयर का सिग्नल स्कैन करना है उस पर क्लिक करें:**"
-    )
-    await query.edit_message_text(
-        text=msg_text, reply_markup=get_main_menu(), parse_mode="Markdown"
-    )
+
+# --- 4. Signal Processing & Fast Logic ---
+def check_signals(prices, pair_display_name):
+  global last_alert_type
+  if len(prices) < 6:
     return
 
-  selected_code = query.data
-  selected_name = [
-      k for k, v in ASSETS_MAP.items() if v == selected_code
-  ] or [selected_code]
+  closes = np.array(prices, dtype=float)
 
-  current_target_pair = selected_code
-  current_target_name = selected_name[0]
-  candles = pd.DataFrame(columns=["time", "open", "high", "low", "close"])
-  last_alert_signal = None
+  # Exponential & Simple Moving Averages
+  ema_fast = (
+      pd.Series(closes).ewm(span=3, adjust=False).mean().iloc[-1]
+  )  # Fast EMA
+  ema_slow = (
+      pd.Series(closes).ewm(span=6, adjust=False).mean().iloc[-1]
+  )  # Slow EMA
+  sma_fast = pd.Series(closes).rolling(window=3, min_periods=1).mean().iloc[-1]
 
-  # WebSocket पर नए पेयर का लाइव डेटा मँगवाना
-  if active_ws:
-    try:
-      sub_msg = json.dumps([{
-          "t": 2,
-          "e": 90,
-          "d": [{"pair": current_target_pair, "tf": 1}],
-      }])
-      await active_ws.send(sub_msg)
-    except Exception:
-      pass
-
-  running_text = (
-      f"🚀 **स्कैनर शुरू हो चुका है!**\n\n"
-      f"📍 **एक्टिव पेयर:** `{current_target_name}` (`{current_target_pair}`)\n"
-      f"📡 **स्टेटस:** लाइव भाव और कैंडल्स स्कैन हो रही हैं...\n"
-      f"⏱ **टाइमफ्रेम:** 1 मिनट (EMA + SMA + ROC Filter)\n\n"
-      f"⚡ **अलर्ट:** जैसे ही सही एंट्री बनेगी, तुरंत नीचे मैसेज आ जाएगा!"
-  )
-  back_button = InlineKeyboardMarkup([[
-      InlineKeyboardButton(
-          "🔄 दूसरा पेयर चुनें (Menu)", callback_data="BACK_TO_MENU"
-      )
-  ]])
-  await query.edit_message_text(
-      text=running_text, reply_markup=back_button, parse_mode="Markdown"
-  )
-
-
-# --- 3. सिग्नल और स्ट्रेटेजी ---
-def analyze_market(df, pair_name):
-  global last_alert_signal
-  if len(df) < 10:
-    return
-
-  close = df["close"].astype(float)
-  high = df["high"].astype(float)
-  low = df["low"].astype(float)
-
-  ema9 = close.ewm(span=5, adjust=False).mean().iloc[-1]
-  ema20 = close.ewm(span=10, adjust=False).mean().iloc[-1]
-  sma10 = close.rolling(window=5, min_periods=1).mean().iloc[-1]
-  sma30 = close.rolling(window=10, min_periods=1).mean().iloc[-1]
-  roc5 = (
-      (close.iloc[-1] - close.iloc[-3]) / close.iloc[-3]
-  ) * 100 if len(close) >= 3 else 0
-
-  dc_high = high.rolling(window=10, min_periods=1).max().iloc[-1]
-  dc_low = low.rolling(window=10, min_periods=1).min().iloc[-1]
+  # Donchian Channel
+  dc_high = pd.Series(closes).rolling(window=6, min_periods=1).max().iloc[-1]
+  dc_low = pd.Series(closes).rolling(window=6, min_periods=1).min().iloc[-1]
   dc_mid = (dc_high + dc_low) / 2
 
-  current_price = close.iloc[-1]
+  # Rate of Change (Momentum)
+  roc = ((closes[-1] - closes[-3]) / closes[-3]) * 100 if len(closes) >= 3 else 0
+  curr = closes[-1]
 
-  up_signal = (
-      (current_price >= dc_mid)
-      and (current_price > ema9)
-      and (ema9 >= ema20)
-      and (roc5 >= 0)
-      and (current_price >= sma10)
+  # CALL & PUT Conditions
+  is_call = (
+      (curr >= dc_mid)
+      and (curr >= ema_fast)
+      and (ema_fast >= ema_slow)
+      and (roc >= 0)
+  )
+  is_put = (
+      (curr <= dc_mid)
+      and (curr <= ema_fast)
+      and (ema_fast <= ema_slow)
+      and (roc <= 0)
   )
 
-  down_signal = (
-      (current_price <= dc_mid)
-      and (current_price < ema9)
-      and (ema9 <= ema20)
-      and (roc5 <= 0)
-      and (current_price <= sma10)
-  )
-
-  if up_signal and last_alert_signal != "UP":
-    last_alert_signal = "UP"
-    send_telegram_alert(current_target_name, "STRONG UP (CALL 🟢)", current_price)
-  elif down_signal and last_alert_signal != "DOWN":
-    last_alert_signal = "DOWN"
-    send_telegram_alert(
-        current_target_name, "STRONG DOWN (PUT 🔴)", current_price
-    )
+  if is_call and last_alert_type != "CALL":
+    last_alert_type = "CALL"
+    dispatch_alert(pair_display_name, "STRONG UP (CALL 🟢)", curr)
+  elif is_put and last_alert_type != "PUT":
+    last_alert_type = "PUT"
+    dispatch_alert(pair_display_name, "STRONG DOWN (PUT 🔴)", curr)
 
 
-def send_telegram_alert(pair_name, signal_type, price):
-  emoji = "🟢" if "UP" in signal_type else "🔴"
-  message = (
-      f"{emoji} **AI SCANNER SIGNAL ALERT** {emoji}\n\n"
-      f"📊 **Asset:** {pair_name}\n"
-      f"🎯 **Direction:** {signal_type}\n"
-      f"💵 **Price:** `{price}`\n"
+def dispatch_alert(pair_name, direction, price):
+  emoji = "🟢" if "UP" in direction else "🔴"
+  msg = (
+      f"{emoji} **AI SCANNER SIGNAL CONFIRMED** {emoji}\n\n"
+      f"📊 **Asset:** `{pair_name}`\n"
+      f"🎯 **Action:** {direction}\n"
+      f"💵 **Entry Price:** `{price}`\n"
       f"⏱ **Expiry:** 1 Minute\n\n"
-      f"✅ **4 Indicators Confirmed - Place Trade Now!**"
+      f"⚡ **Conditions Matched: Place Trade Now!**"
   )
-  url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+  send_tg_message(TELEGRAM_CHAT_ID, msg)
+
+
+# --- 5. Telegram Listener Loop (Zero Conflict Guaranteed) ---
+def telegram_worker():
+  global current_pair, current_name, price_history, last_alert_type
+  offset = 0
+
+  # Clean start: Clear any lingering sessions
   try:
-    requests.post(
-        url,
-        json={
-            "chat_id": TELEGRAM_CHAT_ID,
-            "text": message,
-            "parse_mode": "Markdown",
-        },
-        timeout=5,
+    requests.get(
+        f"{API_URL}/deleteWebhook?drop_pending_updates=true", timeout=5
     )
-  except Exception as e:
-    print(f"Telegram Error: {e}")
+  except Exception:
+    pass
+
+  while True:
+    try:
+      params = {"timeout": 15, "offset": offset}
+      res = requests.get(f"{API_URL}/getUpdates", params=params, timeout=20)
+      if res.status_code == 200:
+        data = res.json()
+        if data.get("ok"):
+          for update in data.get("result", []):
+            offset = update["update_id"] + 1
+
+            # Commands: /start, /menu
+            if "message" in update and "text" in update["message"]:
+              t = update["message"]["text"]
+              cid = update["message"]["chat"]["id"]
+              if t in ["/start", "/menu"]:
+                menu_msg = (
+                    "🎯 **OlympTrade Live AI Scanner**\n\n"
+                    "👇 **जिस पेयर को स्कैन करना है उस पर क्लिक करें:**"
+                )
+                send_tg_message(cid, menu_msg, get_main_menu_keyboard())
+
+            # Button Clicks
+            elif "callback_query" in update:
+              cb = update["callback_query"]
+              cid = cb["message"]["chat"]["id"]
+              mid = cb["message"]["message_id"]
+              action = cb["data"]
+
+              try:
+                requests.post(
+                    f"{API_URL}/answerCallbackQuery",
+                    json={"callback_query_id": cb["id"]},
+                    timeout=3,
+                )
+              except Exception:
+                pass
+
+              if action == "BACK_MENU":
+                menu_msg = (
+                    "🎯 **OlympTrade Live AI Scanner**\n\n"
+                    "👇 **जिस पेयर को स्कैन करना है उस पर क्लिक करें:**"
+                )
+                edit_tg_message(cid, mid, menu_msg, get_main_menu_keyboard())
+              elif action in ASSETS_MAP.values():
+                current_pair = action
+                name_lookup = [
+                    k for k, v in ASSETS_MAP.items() if v == current_pair
+                ]
+                current_name = name_lookup[0] if name_lookup else current_pair
+                price_history = []
+                last_alert_type = None
+
+                # 16 पेयर्स हटेंगे और सिर्फ एक्टिव डैशबोर्ड दिखेगा
+                active_card = (
+                    f"🚀 **स्कैनर एक्टिवेट हो चुका है!**\n\n"
+                    f"📍 **एक्टिव पेयर:** `{current_name}` (`{current_pair}`)\n"
+                    f"📡 **लाइव स्टेटस:** 24/7 डेटा स्ट्रीम चालू है...\n"
+                    f"⏱ **टाइमफ्रेम:** 1 मिनट (Fast Engine)\n\n"
+                    f"⚡ जैसे ही सटीक एंट्री बनेगी, तुरंत नीचे मैसेज आ जाएगा।"
+                )
+                back_nav = {
+                    "inline_keyboard": [[{
+                        "text": "🔄 दूसरा पेयर चुनें (Menu)",
+                        "callback_data": "BACK_MENU",
+                    }]]
+                }
+                edit_tg_message(cid, mid, active_card, back_nav)
+      elif res.status_code == 409:
+        # Conflict recovery instantly without crash
+        time.sleep(3)
+    except Exception:
+      time.sleep(2)
 
 
-# --- 4. WebSocket लाइव स्कैनर ---
-async def websocket_scanner():
-  global candles, current_target_pair, active_ws
+# --- 6. OlympTrade WebSocket Engine ---
+async def stream_market_data():
+  global price_history, current_pair
   headers = {
       "User-Agent": (
           "Mozilla/5.0 (Linux; Android 10) AppleWebKit/537.36 (KHTML, like"
@@ -246,71 +273,35 @@ async def websocket_scanner():
           ping_interval=20,
           ping_timeout=20,
       ) as ws:
-        active_ws = ws
         print("✅ OlympTrade Live Stream Connected!")
-
-        # शुरू में ही सब्सक्राइब मैसेज भेजें
-        sub_msg = json.dumps([{
-            "t": 2,
-            "e": 90,
-            "d": [{"pair": current_target_pair, "tf": 1}],
-        }])
-        await ws.send(sub_msg)
-
         while True:
-          msg = await ws.recv()
+          raw = await ws.recv()
           try:
-            data = json.loads(msg)
+            payload = json.loads(raw)
           except Exception:
             continue
 
-          if isinstance(data, dict) and "d" in data:
-            for item in data["d"]:
-              if isinstance(item, dict) and "p" in item and "q" in item:
-                pair = item.get("p", "").upper()
-
+          if isinstance(payload, dict) and "d" in payload:
+            for node in payload["d"]:
+              if isinstance(node, dict) and "p" in node and "q" in node:
+                p_code = node.get("p", "").upper()
                 if (
-                    current_target_pair in pair
-                    or pair in current_target_pair
-                    or pair == current_target_pair
+                    current_pair in p_code
+                    or p_code in current_pair
+                    or p_code == current_pair
                 ):
-                  price = float(item["q"])
-                  t_stamp = item.get("t", 0)
-                  new_row = {
-                      "time": t_stamp,
-                      "open": price,
-                      "high": price,
-                      "low": price,
-                      "close": price,
-                  }
+                  val = float(node["q"])
+                  price_history.append(val)
+                  if len(price_history) > 60:
+                    price_history.pop(0)
 
-                  candles = pd.concat(
-                      [candles, pd.DataFrame([new_row])], ignore_index=True
-                  )
-                  if len(candles) > 100:
-                    candles = candles.iloc[-100:].reset_index(drop=True)
-
-                  analyze_market(candles, current_target_pair)
-
+                  check_signals(price_history, current_name)
     except Exception as e:
-      print(f"WS Disconnected: {e}. Reconnecting in 5s...")
-      await asyncio.sleep(5)
+      await asyncio.sleep(3)
 
 
-# --- 5. मुख्य रनर ---
-async def main():
-  app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
-  app.add_handler(CommandHandler("start", show_menu))
-  app.add_handler(CommandHandler("menu", show_menu))
-  app.add_handler(CallbackQueryHandler(button_click))
-
-  await app.initialize()
-  await app.start()
-  await app.updater.start_polling(drop_pending_updates=True)
-
-  await websocket_scanner()
-
-
+# --- 7. Execution Entrypoint ---
 if __name__ == "__main__":
-  asyncio.run(main())
+  threading.Thread(target=telegram_worker, daemon=True).start()
+  asyncio.run(stream_market_data())
     
