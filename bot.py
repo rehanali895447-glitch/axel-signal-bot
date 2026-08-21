@@ -16,7 +16,7 @@ from telegram.ext import (
     ContextTypes,
 )
 
-# --- Render के लिए फ़्री वेब सर्वर (ताकि कोई पोर्ट एरर न आए) ---
+# --- Render के लिए वेब सर्वर ---
 PORT = int(os.environ.get("PORT", 8080))
 
 
@@ -33,8 +33,11 @@ class DummyHandler(http.server.SimpleHTTPRequestHandler):
 
 
 def start_dummy_server():
-  with socketserver.TCPServer(("", PORT), DummyHandler) as httpd:
-    httpd.serve_forever()
+  try:
+    with socketserver.TCPServer(("", PORT), DummyHandler) as httpd:
+      httpd.serve_forever()
+  except Exception:
+    pass
 
 
 threading.Thread(target=start_dummy_server, daemon=True).start()
@@ -44,7 +47,6 @@ WS_URL = "wss://ws.olymptrade.com/otp?cid_ver=1&cid_app=web%40OlympTrade%402026.
 TELEGRAM_BOT_TOKEN = "7979146076:AAGA4DhgxgWVcdeWBkaoa0ewWGWmPOv5OnQ"
 TELEGRAM_CHAT_ID = "6968099958"
 
-# आपकी पसंद के सारे पेयर्स और इंडेक्स
 ASSETS_MAP = {
     "🌏 Asia Composite": "ASIA_X",
     "💧 Compound Index": "COMPOUND_X",
@@ -68,10 +70,10 @@ current_target_pair = "ASIA_X"
 current_target_name = "🌏 Asia Composite"
 candles = pd.DataFrame(columns=["time", "open", "high", "low", "close"])
 last_alert_signal = None
+active_ws = None
 
 
-# --- 2. Telegram मेनू और बटन ---
-async def show_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+def get_main_menu():
   buttons = []
   row = []
   for name, code in ASSETS_MAP.items():
@@ -81,22 +83,35 @@ async def show_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
       row = []
   if row:
     buttons.append(row)
+  return InlineKeyboardMarkup(buttons)
 
-  reply_markup = InlineKeyboardMarkup(buttons)
+
+# --- 2. Telegram हैंडलर्स ---
+async def show_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
   msg_text = (
-      f"🎯 **लाइव स्कैनर कंट्रोल पैनल**\n\n"
-      f"📍 **वर्तमान एक्टिव पेयर:** `{current_target_name}`\n"
-      f"👇 **जिस पेयर का सिग्नल चाहिए उस बटन पर टैप करें:**"
+      "🎯 **OlympTrade Live AI Scanner**\n\n"
+      "👇 **जिस पेयर का 1-मिनट सिग्नल चाहिए उस पर क्लिक करें:**"
   )
-  await update.message.reply_text(
-      msg_text, reply_markup=reply_markup, parse_mode="Markdown"
-  )
+  if update.message:
+    await update.message.reply_text(
+        msg_text, reply_markup=get_main_menu(), parse_mode="Markdown"
+    )
 
 
 async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
-  global current_target_pair, current_target_name, candles, last_alert_signal
+  global current_target_pair, current_target_name, candles, last_alert_signal, active_ws
   query = update.callback_query
   await query.answer()
+
+  if query.data == "BACK_TO_MENU":
+    msg_text = (
+        "🎯 **OlympTrade Live AI Scanner**\n\n"
+        "👇 **जिस पेयर का सिग्नल स्कैन करना है उस पर क्लिक करें:**"
+    )
+    await query.edit_message_text(
+        text=msg_text, reply_markup=get_main_menu(), parse_mode="Markdown"
+    )
+    return
 
   selected_code = query.data
   selected_name = [
@@ -108,54 +123,73 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
   candles = pd.DataFrame(columns=["time", "open", "high", "low", "close"])
   last_alert_signal = None
 
+  # WebSocket पर नए पेयर का लाइव डेटा मँगवाना
+  if active_ws:
+    try:
+      sub_msg = json.dumps([{
+          "t": 2,
+          "e": 90,
+          "d": [{"pair": current_target_pair, "tf": 1}],
+      }])
+      await active_ws.send(sub_msg)
+    except Exception:
+      pass
+
+  running_text = (
+      f"🚀 **स्कैनर शुरू हो चुका है!**\n\n"
+      f"📍 **एक्टिव पेयर:** `{current_target_name}` (`{current_target_pair}`)\n"
+      f"📡 **स्टेटस:** लाइव भाव और कैंडल्स स्कैन हो रही हैं...\n"
+      f"⏱ **टाइमफ्रेम:** 1 मिनट (EMA + SMA + ROC Filter)\n\n"
+      f"⚡ **अलर्ट:** जैसे ही सही एंट्री बनेगी, तुरंत नीचे मैसेज आ जाएगा!"
+  )
+  back_button = InlineKeyboardMarkup([[
+      InlineKeyboardButton(
+          "🔄 दूसरा पेयर चुनें (Menu)", callback_data="BACK_TO_MENU"
+      )
+  ]])
   await query.edit_message_text(
-      text=(
-          f"✅ **सफलतापूर्वक सेट हुआ!**\n\n"
-          f"📡 बोट अब सिर्फ **{current_target_name}** (`{current_target_pair}`) को 24/7 स्कैन कर रहा है।\n"
-          f"जैसे ही स्ट्रेटेजी कन्फर्म होगी, तुरंत अलर्ट आएगा।"
-      ),
-      parse_mode="Markdown",
+      text=running_text, reply_markup=back_button, parse_mode="Markdown"
   )
 
 
-# --- 3. इंडिकेटर्स और सिग्नल एनालिसिस ---
+# --- 3. सिग्नल और स्ट्रेटेजी ---
 def analyze_market(df, pair_name):
   global last_alert_signal
-  if len(df) < 35:
+  if len(df) < 10:
     return
 
   close = df["close"].astype(float)
   high = df["high"].astype(float)
   low = df["low"].astype(float)
 
-  ema9 = close.ewm(span=9, adjust=False).mean().iloc[-1]
-  ema20 = close.ewm(span=20, adjust=False).mean().iloc[-1]
-  sma10 = close.rolling(window=10).mean().iloc[-1]
-  sma30 = close.rolling(window=30).mean().iloc[-1]
-  roc5 = ((close.iloc[-1] - close.iloc[-6]) / close.iloc[-6]) * 100
+  ema9 = close.ewm(span=5, adjust=False).mean().iloc[-1]
+  ema20 = close.ewm(span=10, adjust=False).mean().iloc[-1]
+  sma10 = close.rolling(window=5, min_periods=1).mean().iloc[-1]
+  sma30 = close.rolling(window=10, min_periods=1).mean().iloc[-1]
+  roc5 = (
+      (close.iloc[-1] - close.iloc[-3]) / close.iloc[-3]
+  ) * 100 if len(close) >= 3 else 0
 
-  dc_high = high.rolling(window=20).max().iloc[-1]
-  dc_low = low.rolling(window=20).min().iloc[-1]
+  dc_high = high.rolling(window=10, min_periods=1).max().iloc[-1]
+  dc_low = low.rolling(window=10, min_periods=1).min().iloc[-1]
   dc_mid = (dc_high + dc_low) / 2
 
   current_price = close.iloc[-1]
 
   up_signal = (
-      (current_price > dc_mid)
+      (current_price >= dc_mid)
       and (current_price > ema9)
-      and (ema9 > ema20)
-      and (roc5 > 0)
-      and (current_price > sma10)
-      and (sma10 > sma30)
+      and (ema9 >= ema20)
+      and (roc5 >= 0)
+      and (current_price >= sma10)
   )
 
   down_signal = (
-      (current_price < dc_mid)
+      (current_price <= dc_mid)
       and (current_price < ema9)
-      and (ema9 < ema20)
-      and (roc5 < 0)
-      and (current_price < sma10)
-      and (sma10 < sma30)
+      and (ema9 <= ema20)
+      and (roc5 <= 0)
+      and (current_price <= sma10)
   )
 
   if up_signal and last_alert_signal != "UP":
@@ -176,7 +210,7 @@ def send_telegram_alert(pair_name, signal_type, price):
       f"🎯 **Direction:** {signal_type}\n"
       f"💵 **Price:** `{price}`\n"
       f"⏱ **Expiry:** 1 Minute\n\n"
-      f"✅ **All 4 Strategies Confirmed**"
+      f"✅ **4 Indicators Confirmed - Place Trade Now!**"
   )
   url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
   try:
@@ -195,7 +229,7 @@ def send_telegram_alert(pair_name, signal_type, price):
 
 # --- 4. WebSocket लाइव स्कैनर ---
 async def websocket_scanner():
-  global candles, current_target_pair
+  global candles, current_target_pair, active_ws
   headers = {
       "User-Agent": (
           "Mozilla/5.0 (Linux; Android 10) AppleWebKit/537.36 (KHTML, like"
@@ -212,7 +246,17 @@ async def websocket_scanner():
           ping_interval=20,
           ping_timeout=20,
       ) as ws:
+        active_ws = ws
         print("✅ OlympTrade Live Stream Connected!")
+
+        # शुरू में ही सब्सक्राइब मैसेज भेजें
+        sub_msg = json.dumps([{
+            "t": 2,
+            "e": 90,
+            "d": [{"pair": current_target_pair, "tf": 1}],
+        }])
+        await ws.send(sub_msg)
+
         while True:
           msg = await ws.recv()
           try:
@@ -243,8 +287,8 @@ async def websocket_scanner():
                   candles = pd.concat(
                       [candles, pd.DataFrame([new_row])], ignore_index=True
                   )
-                  if len(candles) > 150:
-                    candles = candles.iloc[-150:].reset_index(drop=True)
+                  if len(candles) > 100:
+                    candles = candles.iloc[-100:].reset_index(drop=True)
 
                   analyze_market(candles, current_target_pair)
 
@@ -269,5 +313,4 @@ async def main():
 
 if __name__ == "__main__":
   asyncio.run(main())
-    
     
