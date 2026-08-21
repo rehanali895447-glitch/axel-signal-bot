@@ -1,5 +1,9 @@
 import asyncio
+import http.server
 import json
+import os
+import socketserver
+import threading
 import numpy as np
 import pandas as pd
 import requests
@@ -11,6 +15,29 @@ from telegram.ext import (
     CommandHandler,
     ContextTypes,
 )
+
+# --- Render के लिए फ़्री वेब सर्वर (ताकि कोई पोर्ट एरर न आए) ---
+PORT = int(os.environ.get("PORT", 8080))
+
+
+class DummyHandler(http.server.SimpleHTTPRequestHandler):
+
+  def do_GET(self):
+    self.send_response(200)
+    self.send_header("Content-type", "text/plain")
+    self.end_headers()
+    self.wfile.write(b"Bot is Running 24/7!")
+
+  def log_message(self, format, *args):
+    return
+
+
+def start_dummy_server():
+  with socketserver.TCPServer(("", PORT), DummyHandler) as httpd:
+    httpd.serve_forever()
+
+
+threading.Thread(target=start_dummy_server, daemon=True).start()
 
 # --- 1. सेटिंग्स ---
 WS_URL = "wss://ws.olymptrade.com/otp?cid_ver=1&cid_app=web%40OlympTrade%402026.3.2396554%402396554&cid_device=%40%40phone&cid_os=android%4010"
@@ -235,7 +262,6 @@ async def main():
 
   await app.initialize()
   await app.start()
-  # पुराने अटके हुए कनेक्शन को हटाने के लिए drop_pending_updates जोड़ा गया है
   await app.updater.start_polling(drop_pending_updates=True)
 
   await websocket_scanner()
@@ -243,4 +269,5 @@ async def main():
 
 if __name__ == "__main__":
   asyncio.run(main())
+    
     
