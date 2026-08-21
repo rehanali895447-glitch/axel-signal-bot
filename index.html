@@ -40,13 +40,13 @@
       font-size: 12px;
       padding: 4px 10px;
       border-radius: 12px;
-      background-color: #064e3b;
-      color: #34d399;
-      font-weight: 600;
-    }
-    .status-badge.offline {
       background-color: #7f1d1d;
       color: #f87171;
+      font-weight: 600;
+    }
+    .status-badge.live {
+      background-color: #064e3b;
+      color: #34d399;
     }
     .card {
       width: 100%;
@@ -81,7 +81,7 @@
       margin: 12px 0;
     }
     .price-value {
-      font-size: 32px;
+      font-size: 36px;
       font-weight: 800;
       color: #f3f4f6;
       font-family: monospace;
@@ -96,7 +96,6 @@
       justify-content: center;
       align-items: center;
       margin-bottom: 20px;
-      transition: all 0.2s ease;
       background: #111827;
       border: 1px solid #1f2937;
     }
@@ -109,14 +108,14 @@
       border: 2px solid #ef4444;
     }
     .signal-text {
-      font-size: 42px;
+      font-size: 40px;
       font-weight: 900;
       letter-spacing: 1px;
     }
     .signal-time {
-      font-size: 14px;
-      color: #d1d5db;
-      margin-top: 4px;
+      font-size: 13px;
+      color: #9ca3af;
+      margin-top: 6px;
     }
     .btn-group {
       width: 100%;
@@ -134,15 +133,9 @@
       font-size: 16px;
       font-weight: 700;
       cursor: pointer;
-      box-shadow: 0 4px 12px rgba(37, 99, 235, 0.3);
-      transition: transform 0.1s active;
-    }
-    .action-btn:active {
-      transform: scale(0.97);
     }
     .action-btn.secondary {
       background: #374151;
-      box-shadow: none;
     }
   </style>
 </head>
@@ -150,15 +143,15 @@
 
   <div class="header">
     <div class="logo">⚡ MAGNATE AI PRO</div>
-    <div id="wsStatus" class="status-badge">Connecting...</div>
+    <div id="wsStatus" class="status-badge">CONNECTING...</div>
   </div>
 
   <div class="card">
     <div class="label">Select Asset</div>
     <select id="assetSelect" onchange="onAssetChange()">
       <option value="ASIA_X">🌏 Asia Composite</option>
-      <option value="CMDTY_X">💧 Commodity Composite</option>
       <option value="EUR_X">🇪🇺 Europe Composite</option>
+      <option value="CMDTY_X">💧 Commodity Composite</option>
       <option value="FOOTBALL_2026_X">⚽ Football 2026</option>
       <option value="BTCUSD">🪙 Bitcoin (BTC)</option>
       <option value="ETHUSD">💎 Ethereum (ETH)</option>
@@ -166,9 +159,9 @@
       <option value="GBPUSD_OTC">💷 GBP/USD (OTC)</option>
     </select>
 
-    <div class="label">Live Price (Millisecond)</div>
+    <div class="label">Live Real-Time Price</div>
     <div class="price-box">
-      <div id="priceDisplay" class="price-value">0.00</div>
+      <div id="priceDisplay" class="price-value">WAITING...</div>
     </div>
   </div>
 
@@ -185,7 +178,7 @@
   <script>
     const GROQ_KEY = atob("Z3NrX2t6SjlrS2pHbnNqYlR1amtkRTdQV0dkeWIzRllOVWIwYmtZdVN3MHJydXNwZDNQMEtuNTg=");
     let currentPair = "ASIA_X";
-    let ticks = [];
+    let liveTicks = [];
     let ws = null;
     let keepAliveTimer = null;
 
@@ -196,8 +189,7 @@
         ws = new WebSocket(wsUrl);
 
         ws.onopen = () => {
-          document.getElementById("wsStatus").textContent = "LIVE CONNECTED";
-          document.getElementById("wsStatus").className = "status-badge";
+          document.getElementById("wsStatus").textContent = "CONNECTED";
           subscribePair(currentPair);
           
           if (keepAliveTimer) clearInterval(keepAliveTimer);
@@ -210,34 +202,19 @@
 
         ws.onmessage = (event) => {
           try {
-            const data = JSON.parse(event.data);
-            const nodes = Array.isArray(data) ? data : [data];
-            
-            nodes.forEach(item => {
-              if (item.d) {
-                const list = Array.isArray(item.d) ? item.d : [item.d];
-                list.forEach(node => {
-                  if (node.p && node.q) {
-                    const pName = String(node.p).toUpperCase();
-                    if (pName.includes(currentPair) || currentPair.includes(pName)) {
-                      const price = parseFloat(node.q);
-                      updatePrice(price);
-                    }
-                  }
-                });
-              }
-            });
+            const raw = JSON.parse(event.data);
+            parseOlympTradeMessage(raw);
           } catch (e) {}
         };
 
         ws.onerror = () => {
-          document.getElementById("wsStatus").textContent = "OFFLINE";
-          document.getElementById("wsStatus").className = "status-badge offline";
+          document.getElementById("wsStatus").textContent = "WS ERROR";
+          document.getElementById("wsStatus").className = "status-badge";
         };
 
         ws.onclose = () => {
           document.getElementById("wsStatus").textContent = "RECONNECTING...";
-          document.getElementById("wsStatus").className = "status-badge offline";
+          document.getElementById("wsStatus").className = "status-badge";
           setTimeout(initWebSocket, 2000);
         };
       } catch (err) {
@@ -245,27 +222,69 @@
       }
     }
 
-    function subscribePair(pair) {
-      if (ws && ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify([{ t: 2, e: 90, d: [{ p: pair }] }]));
-        ws.send(JSON.stringify([{ t: 2, e: 91, d: [{ p: pair }] }]));
+    // Exact Recursive Universal Parser for Live Olymp Trade Ticks
+    function parseOlympTradeMessage(payload) {
+      const list = Array.isArray(payload) ? payload : [payload];
+      for (const item of list) {
+        if (!item) continue;
+
+        // Recursive key scanner for pair name and price
+        function scanObject(obj) {
+          if (!obj || typeof obj !== "object") return;
+
+          let pName = String(obj.p || obj.pair || "").toUpperCase();
+          let price = null;
+
+          if (obj.q !== undefined) price = parseFloat(obj.q);
+          else if (obj.rate !== undefined) price = parseFloat(obj.rate);
+          else if (obj.c !== undefined) price = parseFloat(obj.c);
+          else if (obj.price !== undefined) price = parseFloat(obj.price);
+
+          if (pName && (pName.includes(currentPair) || currentPair.includes(pName))) {
+            if (price && !isNaN(price) && price > 0) {
+              handleLiveTick(price);
+            }
+          }
+
+          if (Array.isArray(obj.d)) {
+            obj.d.forEach(scanObject);
+          } else if (obj.d && typeof obj.d === "object") {
+            scanObject(obj.d);
+          }
+        }
+
+        scanObject(item);
       }
     }
 
-    function updatePrice(price) {
-      document.getElementById("priceDisplay").textContent = price.toFixed(pairIsOTC() ? 5 : 2);
-      ticks.push(price);
-      if (ticks.length > 30) ticks.shift();
+    function subscribePair(pair) {
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        // Send Subscriptions to all matching internal engines
+        ws.send(JSON.stringify([{ t: 2, e: 80, d: [{ p: pair }] }]));
+        ws.send(JSON.stringify([{ t: 2, e: 90, d: [{ p: pair }] }]));
+        ws.send(JSON.stringify([{ t: 2, e: 91, d: [{ p: pair }] }]));
+        ws.send(JSON.stringify([{ t: 2, e: 92, d: [{ pair: pair }] }]));
+      }
     }
 
-    function pairIsOTC() {
-      return currentPair.includes("OTC");
+    function handleLiveTick(price) {
+      document.getElementById("wsStatus").textContent = "LIVE TICKING 🟢";
+      document.getElementById("wsStatus").className = "status-badge live";
+      
+      const isOtc = currentPair.includes("OTC");
+      document.getElementById("priceDisplay").textContent = price.toFixed(isOtc ? 5 : 2);
+      
+      liveTicks.push(price);
+      if (liveTicks.length > 25) liveTicks.shift();
     }
 
     function onAssetChange() {
       currentPair = document.getElementById("assetSelect").value;
-      ticks = [];
-      document.getElementById("priceDisplay").textContent = "...";
+      liveTicks = [];
+      document.getElementById("priceDisplay").textContent = "WAITING...";
+      document.getElementById("signalText").textContent = "READY";
+      document.getElementById("signalSub").textContent = "Tap button below for signal";
+      document.getElementById("signalBox").className = "signal-container";
       subscribePair(currentPair);
     }
 
@@ -274,15 +293,19 @@
       const sigText = document.getElementById("signalText");
       const sigSub = document.getElementById("signalSub");
 
+      if (liveTicks.length < 2) {
+        box.className = "signal-container";
+        sigText.textContent = "WAIT TICKS";
+        sigSub.textContent = "Waiting for live ticks from server...";
+        return;
+      }
+
       sigText.textContent = "ANALYZING...";
       box.className = "signal-container";
 
-      if (ticks.length < 3) {
-        const base = currentPair === "ASIA_X" ? 6105.20 : 7458.50;
-        ticks = [base, base + 0.1, base + 0.2];
-      }
-
-      const ticksStr = ticks.slice(-12).map(x => x.toFixed(pairIsOTC() ? 5 : 2)).join(", ");
+      const ticksStr = liveTicks.slice(-10).join(", ");
+      const firstTick = liveTicks[0];
+      const lastTick = liveTicks[liveTicks.length - 1];
 
       try {
         const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
@@ -294,42 +317,40 @@
           body: JSON.stringify({
             model: "openai/gpt-oss-20b",
             messages: [
-              { role: "system", content: "You are a real-time binary trading AI. Return JSON only: {\"signal\": \"UP\" or \"DOWN\"}" },
-              { role: "user", content: `Real-time ticks for ${currentPair} (${tf}m): [${ticksStr}]. Next candle direction?` }
+              { role: "system", content: "You are a real-time binary trading predictor. If current price is lower than previous ticks, output DOWN. If higher, output UP. Return JSON: {\"signal\": \"UP\" or \"DOWN\"}" },
+              { role: "user", content: `Real Live Ticks for ${currentPair}: [${ticksStr}]. Start Price: ${firstTick}, Latest Price: ${lastTick}. What is the next candle direction?` }
             ],
-            temperature: 0.05,
+            temperature: 0.0,
             response_format: { type: "json_object" }
           })
         });
 
         const data = await res.json();
         const parsed = JSON.parse(data.choices[0].message.content);
-        const decision = parsed.signal ? parsed.signal.toUpperCase() : "UP";
+        const decision = (parsed.signal || "").toUpperCase();
 
-        if (decision.includes("UP") || decision.includes("CALL")) {
-          box.className = "signal-container up";
-          sigText.textContent = "⬆️ UP";
-          sigSub.textContent = `${tf} MIN • ${currentPair}`;
-        } else {
+        if (decision.includes("DOWN") || lastTick < firstTick) {
           box.className = "signal-container down";
           sigText.textContent = "⬇️ DOWN";
+          sigSub.textContent = `${tf} MIN • ${currentPair}`;
+        } else {
+          box.className = "signal-container up";
+          sigText.textContent = "⬆️ UP";
           sigSub.textContent = `${tf} MIN • ${currentPair}`;
         }
       } catch (err) {
-        const isUp = ticks[ticks.length - 1] >= ticks[0];
-        if (isUp) {
-          box.className = "signal-container up";
-          sigText.textContent = "⬆️ UP";
-          sigSub.textContent = `${tf} MIN • ${currentPair}`;
-        } else {
+        if (lastTick < firstTick) {
           box.className = "signal-container down";
           sigText.textContent = "⬇️ DOWN";
+          sigSub.textContent = `${tf} MIN • ${currentPair}`;
+        } else {
+          box.className = "signal-container up";
+          sigText.textContent = "⬆️ UP";
           sigSub.textContent = `${tf} MIN • ${currentPair}`;
         }
       }
     }
 
-    // Initialize Connection on Load
     initWebSocket();
   </script>
 </body>
