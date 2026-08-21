@@ -4,17 +4,16 @@ import json
 import base64
 import requests
 import threading
-import time
 from http.server import HTTPServer, BaseHTTPRequestHandler
 import telebot
 from telebot import types
 
-# --- 1. Render Keep-Alive Port Binding ---
+# --- 1. Render Keep-Alive Server ---
 class DummyServer(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
         self.end_headers()
-        self.wfile.write(b"Magnate Pro Bot Live!")
+        self.wfile.write(b"Magnate Pro Superfast Bot Live!")
 
 def run_server():
     port = int(os.environ.get("PORT", 8080))
@@ -25,7 +24,7 @@ threading.Thread(target=run_server, daemon=True).start()
 
 # --- 2. Keys & Bot Setup ---
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN") or os.getenv("TELEGRAM_BOT_TOKEN")
-GEMINI_KEY = os.getenv("GEMINI_API_KEY")
+GROQ_KEY = os.getenv("GROQ_API_KEY")
 
 bot = telebot.TeleBot(TELEGRAM_TOKEN, threaded=True)
 
@@ -75,7 +74,7 @@ def strategy_menu():
     )
     return markup
 
-# --- 4. Bot Commands & Settings Handlers ---
+# --- 4. Bot Commands & Handlers ---
 @bot.message_handler(commands=['start'])
 def start_cmd(message):
     user_id = message.chat.id
@@ -131,63 +130,59 @@ def callback_inline(call):
         bot.answer_callback_query(call.id, f"Strategy: {val}")
         bot.send_message(user_id, f"✅ Strategy Locked: {val}")
 
-# --- 5. High-Accuracy AI Analysis Engine (With Auto-Retry) ---
+# --- 5. Superfast Groq Vision Analysis Engine ---
 def analyze_chart_process(image_bytes, settings):
     b64_image = base64.b64encode(image_bytes).decode('utf-8')
     
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={GEMINI_KEY}"
+    url = "https://api.groq.com/openai/v1/chat/completions"
+    headers = {
+        "Authorization": f"Bearer {GROQ_KEY}",
+        "Content-Type": "application/json"
+    }
     
     prompt = (
-        f"You are a World-Class High-Accuracy Binary Options Technical Analyst.\n"
-        f"Analyze the attached trading chart screenshot carefully.\n"
-        f"Settings: Duration={settings.get('duration', '1 min')}, Indicator={settings.get('indicator', 'MACD')}, Strategy={settings.get('strategy', 'Optimal')}.\n\n"
-        f"CRITICAL TRADING RULES:\n"
-        f"1. Check Trend, S/R Levels, Candlestick Price Action, and Indicator confirmation.\n"
-        f"2. If the market is choppy, sideways, uncertain, or indicators show no clear confirmation, YOU MUST OUTPUT 'SKIPPED ⚪'.\n"
-        f"3. Only give 'CALL (UP) 🟢' or 'PUT (DOWN) 🔴' if the setup has clear high accuracy.\n\n"
-        f"Provide direct output strictly in this clean format:\n"
+        f"You are an Elite Binary Options Analyst. Analyze the chart screenshot.\n"
+        f"Settings: Timeframe={settings.get('duration', '1 min')}, Indicator={settings.get('indicator', 'MACD')}, Strategy={settings.get('strategy', 'Optimal')}.\n\n"
+        f"RULES:\n"
+        f"1. Check Trend, S/R levels, Candlestick Momentum, Indicator.\n"
+        f"2. If market is uncertain or choppy, output 'SKIPPED ⚪'.\n"
+        f"3. Output strictly in this format:\n\n"
         f"🎯 **SIGNAL:** [CALL (UP) 🟢 / PUT (DOWN) 🔴 / SKIPPED ⚪]\n"
         f"🔥 **CONFIDENCE:** [Percentage]%\n"
         f"⏱ **TIMEFRAME:** {settings.get('duration', '1 min')}\n"
-        f"📈 **TREND & S/R:** [Short analysis of Trend and Support/Resistance level]\n"
-        f"💡 **AI REASONING:** [Key reason for trade entry or why it was skipped]"
+        f"📈 **TREND & S/R:** [Short analysis]\n"
+        f"💡 **AI REASONING:** [Key technical reason]"
     )
     
     payload = {
-        "contents": [{
-            "parts": [
-                {"text": prompt},
-                {
-                    "inline_data": {
-                        "mime_type": "image/jpeg",
-                        "data": b64_image
+        "model": "llama-3.2-11b-vision-preview",
+        "messages": [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": prompt},
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": f"data:image/jpeg;base64,{b64_image}"
+                        }
                     }
-                }
-            ]
-        }],
-        "generationConfig": {
-            "maxOutputTokens": 250,
-            "temperature": 0.1
-        }
+                ]
+            }
+        ],
+        "max_tokens": 300,
+        "temperature": 0.1
     }
     
-    headers = {"Content-Type": "application/json"}
-
-    # ऑटो-रीट्राई सिस्टम: सर्वर लोड होने पर खुद 2-3 बार कोशिश करेगा
-    for attempt in range(3):
-        try:
-            response = requests.post(url, headers=headers, json=payload, timeout=20)
-            res_data = response.json()
-            if "candidates" in res_data:
-                return res_data["candidates"][0]["content"]["parts"][0]["text"]
-            elif "error" in res_data and ("demand" in str(res_data["error"]).lower() or "quota" in str(res_data["error"]).lower()):
-                time.sleep(2)
-                continue
-        except Exception:
-            time.sleep(2)
-            continue
-            
-    return "❌ Error: AI server busy. Please try again in 1 minute."
+    try:
+        response = requests.post(url, headers=headers, json=payload, timeout=20)
+        res_data = response.json()
+        if "choices" in res_data:
+            return res_data["choices"][0]["message"]["content"]
+        else:
+            return f"❌ Error: {res_data.get('error', {}).get('message', 'Key issue')}"
+    except Exception as e:
+        return f"❌ Error: {str(e)}"
 
 @bot.message_handler(content_types=['photo'])
 def handle_photo(message):
@@ -195,7 +190,7 @@ def handle_photo(message):
     if user_id not in user_settings:
         user_settings[user_id] = get_default_settings()
     
-    wait_msg = bot.reply_to(message, "🧠 *Analyzing Chart with High-Accuracy AI...*", parse_mode="Markdown")
+    wait_msg = bot.reply_to(message, "⚡ *Analyzing Chart Instantly...*", parse_mode="Markdown")
     
     try:
         file_info = bot.get_file(message.photo[-1].file_id)
@@ -209,4 +204,3 @@ def handle_photo(message):
 if __name__ == "__main__":
     print("Bot is starting...")
     bot.infinity_polling()
-        
