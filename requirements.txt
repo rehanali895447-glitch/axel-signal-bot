@@ -1,3 +1,2 @@
-pyTelegramBotAPI
-requests
-Pillow
+aiogram
+google-generativeai
