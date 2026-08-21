@@ -130,7 +130,7 @@ def callback_inline(call):
         bot.answer_callback_query(call.id, f"Strategy: {val}")
         bot.send_message(user_id, f"✅ Strategy Locked: {val}")
 
-# --- 5. Superfast Groq Vision Analysis Engine ---
+# --- 5. Updated Groq Vision Analysis (Stable Model) ---
 def analyze_chart_process(image_bytes, settings):
     b64_image = base64.b64encode(image_bytes).decode('utf-8')
     
@@ -155,7 +155,7 @@ def analyze_chart_process(image_bytes, settings):
     )
     
     payload = {
-        "model": "llama-3.2-11b-vision-preview",
+        "model": "llama-3.2-90b-vision-preview",
         "messages": [
             {
                 "role": "user",
@@ -204,3 +204,4 @@ def handle_photo(message):
 if __name__ == "__main__":
     print("Bot is starting...")
     bot.infinity_polling()
+    
