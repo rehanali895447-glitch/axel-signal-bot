@@ -10,7 +10,7 @@ import websockets
 import numpy as np
 import pandas as pd
 
-# 1. Render Port Listener (Keep Service 24/7 Alive)
+# 1. Render Uptime Web Server (Port 8080)
 PORT = int(os.environ.get("PORT", 8080))
 
 class ServerHandler(http.server.SimpleHTTPRequestHandler):
@@ -18,7 +18,7 @@ class ServerHandler(http.server.SimpleHTTPRequestHandler):
         self.send_response(200)
         self.send_header('Content-type', 'text/plain')
         self.end_headers()
-        self.wfile.write(b"OlympTrade VIP Signal Engine 24/7 Alive")
+        self.wfile.write(b"Bot Active 24/7")
     def log_message(self, format, *args):
         return
 
@@ -31,9 +31,8 @@ def run_http_server():
 
 threading.Thread(target=run_http_server, daemon=True).start()
 
-# 2. Settings & 3 Top Assets
+# 2. Config & Index Setup
 TELEGRAM_BOT_TOKEN = "7979146076:AAGA4DhgxgWVcdeWBkaoa0ewWGWmPOv5OnQ"
-TELEGRAM_CHAT_ID = "6968099958"
 API_URL = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}"
 WS_URL = "wss://ws.olymptrade.com/otp?cid_ver=1&cid_app=web%40OlympTrade%402026.3.2396554%402396554&cid_device=%40%40phone&cid_os=android%4010"
 
@@ -49,7 +48,6 @@ market_cache = {
     "FOOTBALL_2026_X": []
 }
 
-# 3. Keyboards (Exactly like photo layout)
 def get_main_menu():
     buttons = []
     for name, code in INDEX_MAP.items():
@@ -57,55 +55,47 @@ def get_main_menu():
     return {"inline_keyboard": buttons}
 
 def get_time_menu(pair_code, pair_name):
-    clean_name = pair_name.replace("🌏 ", "").replace("💧 ", "").replace("⚽ ", "")
+    clean = pair_name.replace("🌏 ", "").replace("💧 ", "").replace("⚽ ", "")
     buttons = [
-        [{"text": f"⚡ 15 SEC 🟢 {clean_name}", "callback_data": f"SIG_15_{pair_code}"}],
-        [{"text": f"⚡ 10 SEC 🟢 {clean_name}", "callback_data": f"SIG_10_{pair_code}"}],
-        [{"text": f"⚡ 5 SEC 🟢 {clean_name}", "callback_data": f"SIG_5_{pair_code}"}],
-        [
-            {"text": "🔙 Back", "callback_data": "MENU_BACK"},
-            {"text": "🏠 Main Menu", "callback_data": "MENU_MAIN"}
-        ]
+        [{"text": f"⚡ 45 SEC 🟢 {clean}", "callback_data": f"SIG_45_{pair_code}"}],
+        [{"text": f"⚡ 30 SEC 🟢 {clean}", "callback_data": f"SIG_30_{pair_code}"}],
+        [{"text": f"⚡ 15 SEC 🟢 {clean}", "callback_data": f"SIG_15_{pair_code}"}],
+        [{"text": "🔄 दूसरा पेयर चुनें (Change Pair)", "callback_data": "MENU_MAIN"}]
     ]
     return {"inline_keyboard": buttons}
 
-# 4. Instant Signal Formatting (Photo Style)
+# 3. Fast Analysis Engine (EMA + Momentum)
 def generate_instant_signal(pair_code, timeframe_sec):
     prices = market_cache.get(pair_code, [])
     pair_name = [k for k, v in INDEX_MAP.items() if v == pair_code]
     display_name = pair_name[0] if pair_name else pair_code
-    curr_price = prices[-1] if prices else round(np.random.uniform(1.23400, 1.23550), 5)
-
-    if len(prices) >= 3:
+    
+    if len(prices) >= 5:
+        closes = np.array(prices, dtype=float)
+        ema_fast = pd.Series(closes).ewm(span=3, adjust=False).mean().iloc[-1]
+        ema_slow = pd.Series(closes).ewm(span=8, adjust=False).mean().iloc[-1]
+        momentum = closes[-1] - closes[-3]
+        is_call = (ema_fast >= ema_slow) and (momentum >= 0)
+    elif len(prices) >= 2:
         is_call = prices[-1] >= prices[-2]
     else:
         is_call = (int(time.time() * 10) % 2) == 0
 
     if is_call:
         msg = (
-            f"🟩🟩🟩🟩🟩🟩🟩🟩🟩🟩\n"
-            f"⬆️⬆️    **CALL (BUY)**    ⬆️⬆️\n"
-            f"          🦁 🟢 🔥\n\n"
-            f"⏱ **EXPIRY :** `{timeframe_sec} SEC`\n"
-            f"📊 **ASSET  :** `{display_name}`\n"
-            f"💵 **PRICE  :** `{curr_price}`\n"
-            f"🎯 **SIGNAL :** `STRONG BUY (99% ACCURACY)`\n"
-            f"🟩🟩🟩🟩🟩🟩🟩🟩🟩🟩"
+            f"⬆️⬆️ **CALL** ⬆️⬆️\n"
+            f"       🦁 🟢\n"
+            f"⏱ `{timeframe_sec} SEC` 🟢 `{display_name}`"
         )
     else:
         msg = (
-            f"🟥🟥🟥🟥🟥🟥🟥🟥🟥🟥\n"
-            f"⬇️⬇️     **PUT (SELL)**    ⬇️⬇️\n"
-            f"          🐻 🔴 ⚡\n\n"
-            f"⏱ **EXPIRY :** `{timeframe_sec} SEC`\n"
-            f"📊 **ASSET  :** `{display_name}`\n"
-            f"💵 **PRICE  :** `{curr_price}`\n"
-            f"🎯 **SIGNAL :** `STRONG SELL (99% ACCURACY)`\n"
-            f"🟥🟥🟥🟥🟥🟥🟥🟥🟥🟥"
+            f"⬇️⬇️ **PUT** ⬇️⬇️\n"
+            f"       🐻 🔴\n"
+            f"⏱ `{timeframe_sec} SEC` 🔴 `{display_name}`"
         )
-    return msg
+    return msg, display_name
 
-# 5. Telegram Listener Loop
+# 4. Telegram Worker Loop (Clean & No Double Trigger)
 def telegram_worker():
     offset = 0
     try:
@@ -123,21 +113,19 @@ def telegram_worker():
                     for update in data.get("result", []):
                         offset = update["update_id"] + 1
 
+                        # /start command
                         if "message" in update and "text" in update["message"]:
                             t = update["message"]["text"]
                             cid = update["message"]["chat"]["id"]
                             if t in ["/start", "/menu"]:
-                                msg = (
-                                    "🦁 **MAGNATE AI PRO SIGNAL ENGINE** 🦁\n\n"
-                                    "👇 **जिस इंडेक्स का ट्रेड सिग्नल चाहिए उसे सेलेक्ट करें:**"
-                                )
                                 requests.post(f"{API_URL}/sendMessage", json={
                                     "chat_id": cid,
-                                    "text": msg,
+                                    "text": "🎯 **Select Index Asset:**",
                                     "reply_markup": get_main_menu(),
                                     "parse_mode": "Markdown"
                                 }, timeout=5)
 
+                        # Callback query (Button clicks)
                         elif "callback_query" in update:
                             cb = update["callback_query"]
                             cid = cb["message"]["chat"]["id"]
@@ -145,60 +133,55 @@ def telegram_worker():
                             cb_id = cb["id"]
                             action = cb.get("data", "")
 
-                            # Instant ACK to remove button loading animation
+                            # Instant ACK to Telegram
                             try:
                                 requests.post(f"{API_URL}/answerCallbackQuery", json={"callback_query_id": cb_id}, timeout=2)
                             except Exception:
                                 pass
 
+                            # Return to Main Menu
                             if action in ["MENU_MAIN", "MENU_BACK"]:
-                                msg = (
-                                    "🦁 **MAGNATE AI PRO SIGNAL ENGINE** 🦁\n\n"
-                                    "👇 **जिस इंडेक्स का ट्रेड सिग्नल चाहिए उसे सेलेक्ट करें:**"
-                                )
                                 requests.post(f"{API_URL}/editMessageText", json={
                                     "chat_id": cid,
                                     "message_id": mid,
-                                    "text": msg,
+                                    "text": "🎯 **Select Index Asset:**",
                                     "reply_markup": get_main_menu(),
                                     "parse_mode": "Markdown"
                                 }, timeout=5)
 
+                            # Pair Selected -> Show 15s/30s/45s buttons
                             elif action.startswith("PAIR_"):
                                 pair_code = action.replace("PAIR_", "")
                                 p_name = [k for k, v in INDEX_MAP.items() if v == pair_code]
                                 display_name = p_name[0] if p_name else pair_code
 
-                                menu_text = (
-                                    f"🎯 **चयनित एसेट:** `{display_name}`\n\n"
-                                    f"⏱ **एक्सपायरी टाइम चुनें और तुरंत लाइव सिग्नल पाएं:**"
-                                )
                                 requests.post(f"{API_URL}/editMessageText", json={
                                     "chat_id": cid,
                                     "message_id": mid,
-                                    "text": menu_text,
+                                    "text": f"📊 **{display_name}**\n👇 **Select Timeframe to Get Signal:**",
                                     "reply_markup": get_time_menu(pair_code, display_name),
                                     "parse_mode": "Markdown"
                                 }, timeout=5)
 
+                            # Signal Clicked -> Send Signal with Permanent Next-Buttons
                             elif action.startswith("SIG_"):
                                 parts = action.split("_")
                                 sec = parts[1]
                                 pair_code = "_".join(parts[2:])
 
-                                sig_msg = generate_instant_signal(pair_code, sec)
+                                sig_msg, disp_name = generate_instant_signal(pair_code, sec)
                                 
-                                # Send Photo-style Signal Message Instantly
                                 requests.post(f"{API_URL}/sendMessage", json={
                                     "chat_id": cid,
                                     "text": sig_msg,
+                                    "reply_markup": get_time_menu(pair_code, disp_name),
                                     "parse_mode": "Markdown"
                                 }, timeout=5)
             time.sleep(0.1)
         except Exception:
             time.sleep(1)
 
-# 6. WebSocket Live Data Collector
+# 5. Live WebSocket Receiver
 async def websocket_worker():
     headers = {
         "User-Agent": "Mozilla/5.0 (Linux; Android 10) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/139.0.0.0 Mobile Safari/537.36",
@@ -223,7 +206,7 @@ async def websocket_worker():
                                     if key_pair in p_code or p_code in key_pair:
                                         val = float(node["q"])
                                         market_cache[key_pair].append(val)
-                                        if len(market_cache[key_pair]) > 20:
+                                        if len(market_cache[key_pair]) > 30:
                                             market_cache[key_pair].pop(0)
         except Exception:
             await asyncio.sleep(2)
@@ -231,4 +214,4 @@ async def websocket_worker():
 if __name__ == "__main__":
     threading.Thread(target=telegram_worker, daemon=True).start()
     asyncio.run(websocket_worker())
-  
+                            
