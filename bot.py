@@ -4,16 +4,13 @@ from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
 import google.generativeai as genai
 
-# Render की Environment settings से कीज़ उठाना
 API_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
 GOOGLE_API_KEY = os.getenv('GOOGLE_API_KEY')
 
-# सेटअप
 genai.configure(api_key=GOOGLE_API_KEY)
 bot = Bot(token=API_TOKEN)
 dp = Dispatcher()
 
-# AI का सिस्टम इंस्ट्रक्शन
 SYSTEM_INSTRUCTION = """
 You are an expert binary options trading analyst. Analyze the provided chart screenshot.
 Rules:
@@ -23,8 +20,8 @@ Rules:
 Output only the signal and the reason. No extra text.
 """
 
-# Gemini 1.5 Pro (आपके प्रो प्लान की पावर)
-model = genai.GenerativeModel('gemini-1.5-pro', system_instruction=SYSTEM_INSTRUCTION)
+# यहाँ मॉडल का नाम 'gemini-1.5-flash' कर दिया गया है जो विज़न और API पर 100% सपोर्टेड है
+model = genai.GenerativeModel('gemini-1.5-flash', system_instruction=SYSTEM_INSTRUCTION)
 
 @dp.message(Command("start"))
 async def start_cmd(message: types.Message):
@@ -37,21 +34,16 @@ async def handle_photo(message: types.Message):
     file_data = await bot.download_file(file.file_path)
     
     try:
-        # AI को फोटो और निर्देश भेजना
         response = model.generate_content([
             {"mime_type": "image/jpeg", "data": file_data.read()},
             "Analyze this chart now."
         ])
-        
-        # सिग्नल रिस्पॉन्स
         await message.reply(f"📈 **Analysis Result:**\n\n{response.text}")
         await message.answer("Waiting for the next chart... 📊")
-        
     except Exception as e:
         await message.reply(f"❌ Error: {str(e)}")
 
 async def main():
-    print("Bot is running...")
     await dp.start_polling(bot)
 
 if __name__ == '__main__':
