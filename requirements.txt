@@ -2,3 +2,4 @@ websockets
 pandas
 requests
 numpy
+python-telegram-bot
