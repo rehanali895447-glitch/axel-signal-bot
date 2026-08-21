@@ -4,6 +4,7 @@ import json
 import base64
 import requests
 import threading
+import time
 from http.server import HTTPServer, BaseHTTPRequestHandler
 import telebot
 from telebot import types
@@ -24,7 +25,7 @@ threading.Thread(target=run_server, daemon=True).start()
 
 # --- 2. Keys & Bot Setup ---
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN") or os.getenv("TELEGRAM_BOT_TOKEN")
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+GEMINI_KEY = os.getenv("GEMINI_API_KEY")
 
 bot = telebot.TeleBot(TELEGRAM_TOKEN, threaded=True)
 
@@ -130,9 +131,11 @@ def callback_inline(call):
         bot.answer_callback_query(call.id, f"Strategy: {val}")
         bot.send_message(user_id, f"✅ Strategy Locked: {val}")
 
-# --- 5. High-Accuracy AI Analysis Engine ---
+# --- 5. High-Accuracy AI Analysis Engine (With Auto-Retry) ---
 def analyze_chart_process(image_bytes, settings):
     b64_image = base64.b64encode(image_bytes).decode('utf-8')
+    
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={GEMINI_KEY}"
     
     prompt = (
         f"You are a World-Class High-Accuracy Binary Options Technical Analyst.\n"
@@ -150,46 +153,41 @@ def analyze_chart_process(image_bytes, settings):
         f"💡 **AI REASONING:** [Key reason for trade entry or why it was skipped]"
     )
     
-    url = "https://api.openai.com/v1/responses"
-
     payload = {
-        "model": "gpt-5.6",
-        "input": [
-            {
-                "role": "user",
-                "content": [
-                    {
-                        "type": "input_text",
-                        "text": prompt
-                    },
-                    {
-                        "type": "input_image",
-                        "image_url": f"data:image/jpeg;base64,{b64_image}"
+        "contents": [{
+            "parts": [
+                {"text": prompt},
+                {
+                    "inline_data": {
+                        "mime_type": "image/jpeg",
+                        "data": b64_image
                     }
-                ]
-            }
-        ],
-        "max_output_tokens": 250
+                }
+            ]
+        }],
+        "generationConfig": {
+            "maxOutputTokens": 250,
+            "temperature": 0.1
+        }
     }
     
-    headers = {
-        "Content-Type": "application/json",
-        "Authorization": f"Bearer {OPENAI_API_KEY}"
-    }
+    headers = {"Content-Type": "application/json"}
 
-    response = requests.post(url, headers=headers, json=payload, timeout=20)
-    res_data = response.json()
-    
-    if "error" in res_data:
-        return f"❌ API Error: {res_data['error'].get('message', 'Key Error')}"
-    
-    try:
-        return res_data["output"][0]["content"][0]["text"]
-    except Exception:
+    # ऑटो-रीट्राई सिस्टम: सर्वर लोड होने पर खुद 2-3 बार कोशिश करेगा
+    for attempt in range(3):
         try:
-            return res_data["output_text"]
+            response = requests.post(url, headers=headers, json=payload, timeout=20)
+            res_data = response.json()
+            if "candidates" in res_data:
+                return res_data["candidates"][0]["content"]["parts"][0]["text"]
+            elif "error" in res_data and ("demand" in str(res_data["error"]).lower() or "quota" in str(res_data["error"]).lower()):
+                time.sleep(2)
+                continue
         except Exception:
-            return "❌ Error: Could not accurately read chart. Please send a clearer screenshot."
+            time.sleep(2)
+            continue
+            
+    return "❌ Error: AI server busy. Please try again in 1 minute."
 
 @bot.message_handler(content_types=['photo'])
 def handle_photo(message):
@@ -211,3 +209,4 @@ def handle_photo(message):
 if __name__ == "__main__":
     print("Bot is starting...")
     bot.infinity_polling()
+        
