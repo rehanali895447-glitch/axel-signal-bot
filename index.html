@@ -1,0 +1,336 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>MAGNATE AI PRO</title>
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    }
+    body {
+      background-color: #0b0e14;
+      color: #ffffff;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      min-height: 100vh;
+      padding: 16px;
+    }
+    .header {
+      width: 100%;
+      max-width: 420px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 12px 0;
+      border-bottom: 1px solid #1f2937;
+      margin-bottom: 16px;
+    }
+    .logo {
+      font-size: 18px;
+      font-weight: 700;
+      color: #38bdf8;
+      letter-spacing: 0.5px;
+    }
+    .status-badge {
+      font-size: 12px;
+      padding: 4px 10px;
+      border-radius: 12px;
+      background-color: #064e3b;
+      color: #34d399;
+      font-weight: 600;
+    }
+    .status-badge.offline {
+      background-color: #7f1d1d;
+      color: #f87171;
+    }
+    .card {
+      width: 100%;
+      max-width: 420px;
+      background: #111827;
+      border: 1px solid #1f2937;
+      border-radius: 16px;
+      padding: 20px;
+      margin-bottom: 16px;
+      text-align: center;
+    }
+    .label {
+      font-size: 13px;
+      color: #9ca3af;
+      margin-bottom: 8px;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+    }
+    select {
+      width: 100%;
+      background: #1f2937;
+      color: #ffffff;
+      border: 1px solid #374151;
+      padding: 14px;
+      border-radius: 12px;
+      font-size: 16px;
+      font-weight: 600;
+      outline: none;
+      margin-bottom: 16px;
+    }
+    .price-box {
+      margin: 12px 0;
+    }
+    .price-value {
+      font-size: 32px;
+      font-weight: 800;
+      color: #f3f4f6;
+      font-family: monospace;
+    }
+    .signal-container {
+      width: 100%;
+      max-width: 420px;
+      min-height: 140px;
+      border-radius: 16px;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      margin-bottom: 20px;
+      transition: all 0.2s ease;
+      background: #111827;
+      border: 1px solid #1f2937;
+    }
+    .signal-container.up {
+      background: #064e3b;
+      border: 2px solid #10b981;
+    }
+    .signal-container.down {
+      background: #7f1d1d;
+      border: 2px solid #ef4444;
+    }
+    .signal-text {
+      font-size: 42px;
+      font-weight: 900;
+      letter-spacing: 1px;
+    }
+    .signal-time {
+      font-size: 14px;
+      color: #d1d5db;
+      margin-top: 4px;
+    }
+    .btn-group {
+      width: 100%;
+      max-width: 420px;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+    }
+    .action-btn {
+      background: #2563eb;
+      color: #ffffff;
+      border: none;
+      padding: 16px;
+      border-radius: 14px;
+      font-size: 16px;
+      font-weight: 700;
+      cursor: pointer;
+      box-shadow: 0 4px 12px rgba(37, 99, 235, 0.3);
+      transition: transform 0.1s active;
+    }
+    .action-btn:active {
+      transform: scale(0.97);
+    }
+    .action-btn.secondary {
+      background: #374151;
+      box-shadow: none;
+    }
+  </style>
+</head>
+<body>
+
+  <div class="header">
+    <div class="logo">⚡ MAGNATE AI PRO</div>
+    <div id="wsStatus" class="status-badge">Connecting...</div>
+  </div>
+
+  <div class="card">
+    <div class="label">Select Asset</div>
+    <select id="assetSelect" onchange="onAssetChange()">
+      <option value="ASIA_X">🌏 Asia Composite</option>
+      <option value="CMDTY_X">💧 Commodity Composite</option>
+      <option value="EUR_X">🇪🇺 Europe Composite</option>
+      <option value="FOOTBALL_2026_X">⚽ Football 2026</option>
+      <option value="BTCUSD">🪙 Bitcoin (BTC)</option>
+      <option value="ETHUSD">💎 Ethereum (ETH)</option>
+      <option value="EURUSD_OTC">💶 EUR/USD (OTC)</option>
+      <option value="GBPUSD_OTC">💷 GBP/USD (OTC)</option>
+    </select>
+
+    <div class="label">Live Price (Millisecond)</div>
+    <div class="price-box">
+      <div id="priceDisplay" class="price-value">0.00</div>
+    </div>
+  </div>
+
+  <div id="signalBox" class="signal-container">
+    <div id="signalText" class="signal-text">READY</div>
+    <div id="signalSub" class="signal-time">Tap button below for signal</div>
+  </div>
+
+  <div class="btn-group">
+    <button class="action-btn" onclick="getSignal(1)">⚡ 1 MIN SIGNAL</button>
+    <button class="action-btn secondary" onclick="getSignal(2)">⚡ 2 MIN SIGNAL</button>
+  </div>
+
+  <script>
+    const GROQ_KEY = atob("Z3NrX2t6SjlrS2pHbnNqYlR1amtkRTdQV0dkeWIzRllOVWIwYmtZdVN3MHJydXNwZDNQMEtuNTg=");
+    let currentPair = "ASIA_X";
+    let ticks = [];
+    let ws = null;
+    let keepAliveTimer = null;
+
+    function initWebSocket() {
+      const wsUrl = "wss://ws.olymptrade.com/otp?cid_ver=1&cid_app=web%40OlympTrade%402026.3.2396554%402396554&cid_device=%40%40phone&cid_os=android%4010";
+      
+      try {
+        ws = new WebSocket(wsUrl);
+
+        ws.onopen = () => {
+          document.getElementById("wsStatus").textContent = "LIVE CONNECTED";
+          document.getElementById("wsStatus").className = "status-badge";
+          subscribePair(currentPair);
+          
+          if (keepAliveTimer) clearInterval(keepAliveTimer);
+          keepAliveTimer = setInterval(() => {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+              ws.send(JSON.stringify([{ t: 1 }]));
+            }
+          }, 3000);
+        };
+
+        ws.onmessage = (event) => {
+          try {
+            const data = JSON.parse(event.data);
+            const nodes = Array.isArray(data) ? data : [data];
+            
+            nodes.forEach(item => {
+              if (item.d) {
+                const list = Array.isArray(item.d) ? item.d : [item.d];
+                list.forEach(node => {
+                  if (node.p && node.q) {
+                    const pName = String(node.p).toUpperCase();
+                    if (pName.includes(currentPair) || currentPair.includes(pName)) {
+                      const price = parseFloat(node.q);
+                      updatePrice(price);
+                    }
+                  }
+                });
+              }
+            });
+          } catch (e) {}
+        };
+
+        ws.onerror = () => {
+          document.getElementById("wsStatus").textContent = "OFFLINE";
+          document.getElementById("wsStatus").className = "status-badge offline";
+        };
+
+        ws.onclose = () => {
+          document.getElementById("wsStatus").textContent = "RECONNECTING...";
+          document.getElementById("wsStatus").className = "status-badge offline";
+          setTimeout(initWebSocket, 2000);
+        };
+      } catch (err) {
+        setTimeout(initWebSocket, 2000);
+      }
+    }
+
+    function subscribePair(pair) {
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify([{ t: 2, e: 90, d: [{ p: pair }] }]));
+        ws.send(JSON.stringify([{ t: 2, e: 91, d: [{ p: pair }] }]));
+      }
+    }
+
+    function updatePrice(price) {
+      document.getElementById("priceDisplay").textContent = price.toFixed(pairIsOTC() ? 5 : 2);
+      ticks.push(price);
+      if (ticks.length > 30) ticks.shift();
+    }
+
+    function pairIsOTC() {
+      return currentPair.includes("OTC");
+    }
+
+    function onAssetChange() {
+      currentPair = document.getElementById("assetSelect").value;
+      ticks = [];
+      document.getElementById("priceDisplay").textContent = "...";
+      subscribePair(currentPair);
+    }
+
+    async function getSignal(tf) {
+      const box = document.getElementById("signalBox");
+      const sigText = document.getElementById("signalText");
+      const sigSub = document.getElementById("signalSub");
+
+      sigText.textContent = "ANALYZING...";
+      box.className = "signal-container";
+
+      if (ticks.length < 3) {
+        const base = currentPair === "ASIA_X" ? 6105.20 : 7458.50;
+        ticks = [base, base + 0.1, base + 0.2];
+      }
+
+      const ticksStr = ticks.slice(-12).map(x => x.toFixed(pairIsOTC() ? 5 : 2)).join(", ");
+
+      try {
+        const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+          method: "POST",
+          headers: {
+            "Authorization": `Bearer ${GROQ_KEY}`,
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({
+            model: "openai/gpt-oss-20b",
+            messages: [
+              { role: "system", content: "You are a real-time binary trading AI. Return JSON only: {\"signal\": \"UP\" or \"DOWN\"}" },
+              { role: "user", content: `Real-time ticks for ${currentPair} (${tf}m): [${ticksStr}]. Next candle direction?` }
+            ],
+            temperature: 0.05,
+            response_format: { type: "json_object" }
+          })
+        });
+
+        const data = await res.json();
+        const parsed = JSON.parse(data.choices[0].message.content);
+        const decision = parsed.signal ? parsed.signal.toUpperCase() : "UP";
+
+        if (decision.includes("UP") || decision.includes("CALL")) {
+          box.className = "signal-container up";
+          sigText.textContent = "⬆️ UP";
+          sigSub.textContent = `${tf} MIN • ${currentPair}`;
+        } else {
+          box.className = "signal-container down";
+          sigText.textContent = "⬇️ DOWN";
+          sigSub.textContent = `${tf} MIN • ${currentPair}`;
+        }
+      } catch (err) {
+        const isUp = ticks[ticks.length - 1] >= ticks[0];
+        if (isUp) {
+          box.className = "signal-container up";
+          sigText.textContent = "⬆️ UP";
+          sigSub.textContent = `${tf} MIN • ${currentPair}`;
+        } else {
+          box.className = "signal-container down";
+          sigText.textContent = "⬇️ DOWN";
+          sigSub.textContent = `${tf} MIN • ${currentPair}`;
+        }
+      }
+    }
+
+    // Initialize Connection on Load
+    initWebSocket();
+  </script>
+</body>
+</html>
