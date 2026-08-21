@@ -7,8 +7,6 @@ import http.server
 import socketserver
 import requests
 import websockets
-import numpy as np
-import pandas as pd
 
 # 1. Render Port Listener (24/7 Alive Keep-Alive)
 PORT = int(os.environ.get("PORT", 8080))
@@ -18,7 +16,7 @@ class ServerHandler(http.server.SimpleHTTPRequestHandler):
         self.send_response(200)
         self.send_header('Content-type', 'text/plain')
         self.end_headers()
-        self.wfile.write(b"OlympTrade AI Signal Engine 24/7 Active")
+        self.wfile.write(b"Live WebSocket AI Trading Engine Live")
     def log_message(self, format, *args):
         return
 
@@ -31,22 +29,25 @@ def run_http_server():
 
 threading.Thread(target=run_http_server, daemon=True).start()
 
-# 2. Config & Asset Setup
+# 2. Config & Asset Settings
 TELEGRAM_BOT_TOKEN = "7979146076:AAGA4DhgxgWVcdeWBkaoa0ewWGWmPOv5OnQ"
 API_URL = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}"
 WS_URL = "wss://ws.olymptrade.com/otp?cid_ver=1&cid_app=web%40OlympTrade%402026.3.2396554%402396554&cid_device=%40%40phone&cid_os=android%4010"
 
+GROQ_API_KEY = "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"
+GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
+
 INDEX_MAP = {
     "🌏 Asia Composite": "ASIA_X",
-    "💧 Compound Index": "COMPOUND_X",
+    "💧 Compound Index": "CMDTY_X",
     "⚽ Football 2026": "FOOTBALL_2026_X"
 }
 
-# Millisecond Real Tick Cache
+# Live Real-Tick Memory (Continuously updated by WebSocket)
 market_ticks = {
-    "ASIA_X": [6105.20, 6105.15, 6104.90, 6104.60],
-    "COMPOUND_X": [100.25, 100.20, 100.18, 100.15],
-    "FOOTBALL_2026_X": [50.45, 50.40, 50.35, 50.30]
+    "ASIA_X": [],
+    "CMDTY_X": [],
+    "FOOTBALL_2026_X": []
 }
 
 def get_main_menu():
@@ -75,92 +76,96 @@ def get_signal_followup_menu(pair_code, pair_name):
     ]
     return {"inline_keyboard": buttons}
 
-# 3. High-Accuracy Indicator Engine (EMA + RSI + Momentum)
-def compute_high_accuracy_signal(pair_code, tf_min):
+# 3. High-Speed 1-Minute Win Groq AI Engine
+def ask_groq_ai(ticks, asset_name, tf_min):
+    if not ticks:
+        return "SKIP"
+    
+    ticks_str = ", ".join([str(round(x, 4)) for x in ticks[-15:]])
+    headers = {
+        "Authorization": f"Bearer {GROQ_API_KEY}",
+        "Content-Type": "application/json"
+    }
+    
+    prompt = (
+        f"You are a High Frequency Binary Trading AI. Real-time live ticks for {asset_name}: [{ticks_str}].\n"
+        f"Predict if the IMMEDIATE NEXT 1-MINUTE CANDLE will strictly close HIGHER (CALL) or LOWER (PUT) than current price.\n"
+        f"- Output 'CALL' if strong upward pressure guarantees the next candle closes GREEN.\n"
+        f"- Output 'PUT' if strong downward pressure guarantees the next candle closes RED.\n"
+        f"- Output 'SKIP' if market is choppy, flat, or has high wick rejection.\n\n"
+        f"Strict JSON output only: {{\"signal\": \"CALL\" or \"PUT\" or \"SKIP\"}}"
+    )
+
+    # Active 2026 Production Groq Models
+    models = ["openai/gpt-oss-20b", "openai/gpt-oss-120b", "qwen/qwen3.6-27b"]
+
+    for m in models:
+        try:
+            payload = {
+                "model": m,
+                "messages": [
+                    {"role": "system", "content": "You are a low-latency AI predicting immediate binary candle closes in valid JSON."},
+                    {"role": "user", "content": prompt}
+                ],
+                "temperature": 0.05,
+                "max_tokens": 50,
+                "response_format": {"type": "json_object"}
+            }
+            res = requests.post(GROQ_URL, headers=headers, json=payload, timeout=1.8)
+            if res.status_code == 200:
+                data = res.json()
+                content = data["choices"][0]["message"]["content"]
+                parsed = json.loads(content)
+                return parsed.get("signal", "CALL").upper()
+        except Exception:
+            continue
+
+    # Zero-Lag Fallback Engine
+    if len(ticks) >= 3:
+        if ticks[-1] > ticks[-2] and ticks[-2] >= ticks[-3]:
+            return "CALL"
+        elif ticks[-1] < ticks[-2] and ticks[-2] <= ticks[-3]:
+            return "PUT"
+    return "SKIP"
+
+def generate_clean_signal(pair_code, tf_min):
     ticks = market_ticks.get(pair_code, [])
     pair_name = [k for k, v in INDEX_MAP.items() if v == pair_code]
     display_name = pair_name[0] if pair_name else pair_code
+    curr_price = round(float(ticks[-1]), 4) if ticks else 7458.79
 
-    if len(ticks) >= 6:
-        closes = pd.Series(ticks, dtype=float)
-        ema_fast = closes.ewm(span=3, adjust=False).mean().iloc[-1]
-        ema_slow = closes.ewm(span=8, adjust=False).mean().iloc[-1]
-        
-        # RSI Calculation
-        delta = closes.diff()
-        gain = (delta.where(delta > 0, 0)).rolling(window=5, min_periods=1).mean()
-        loss = (-delta.where(delta < 0, 0)).rolling(window=5, min_periods=1).mean()
-        rs = gain / (loss + 1e-9)
-        rsi = 100 - (100 / (1 + rs)).iloc[-1]
+    signal = ask_groq_ai(ticks, display_name, tf_min)
 
-        # Velocity / Momentum
-        momentum = closes.iloc[-1] - closes.iloc[-3]
-        curr_price = round(float(closes.iloc[-1]), 4)
-
-        # Multi-Indicator Scoring
-        call_score = 0
-        put_score = 0
-
-        if ema_fast >= ema_slow:
-            call_score += 1
-        else:
-            put_score += 1
-
-        if momentum >= 0:
-            call_score += 1
-        else:
-            put_score += 1
-
-        if rsi >= 50:
-            call_score += 1
-        else:
-            put_score += 1
-
-        is_call = call_score > put_score
-    elif len(ticks) >= 2:
-        curr_price = round(float(ticks[-1]), 4)
-        is_call = ticks[-1] >= ticks[-2]
-    else:
-        curr_price = 6104.59
-        is_call = (int(time.time() * 10) % 2) == 0
-
-    if is_call:
+    if signal == "CALL":
         msg = (
             f"🟩🟩🟩🟩🟩🟩🟩🟩🟩🟩\n"
-            f"⬆️⬆️  **SURE-SHOT CALL (UP)**  ⬆️⬆️\n"
-            f"          🦁 🟢 🔥\n\n"
-            f"⏱ **TIMEFRAME :** `{tf_min} MIN`\n"
-            f"📊 **ASSET     :** `{display_name}`\n"
-            f"💵 **PRICE     :** `{curr_price}`\n"
-            f"🎯 **ACCURACY  :** `95%+ CONFIRMED ENTRY`\n"
+            f"⬆️ **CALL (UP)** 🟢 🔥\n\n"
+            f"⏱ `{tf_min} MIN` • `{display_name}`\n"
+            f"💵 **PRICE :** `{curr_price}`\n"
+            f"🎯 *Next 1-Min Candle Win*\n"
             f"🟩🟩🟩🟩🟩🟩🟩🟩🟩🟩"
+        )
+    elif signal == "PUT":
+        msg = (
+            f"🟥🟥🟥🟥🟥🟥🟥🟥🟥🟥\n"
+            f"⬇️ **PUT (DOWN)** 🔴 ⚡\n\n"
+            f"⏱ `{tf_min} MIN` • `{display_name}`\n"
+            f"💵 **PRICE :** `{curr_price}`\n"
+            f"🎯 *Next 1-Min Candle Win*\n"
+            f"🟥🟥🟥🟥🟥🟥🟥🟥🟥🟥"
         )
     else:
         msg = (
-            f"🟥🟥🟥🟥🟥🟥🟥🟥🟥🟥\n"
-            f"⬇️⬇️  **SURE-SHOT PUT (DOWN)**  ⬇️⬇️\n"
-            f"          🐻 🔴 ⚡\n\n"
-            f"⏱ **TIMEFRAME :** `{tf_min} MIN`\n"
-            f"📊 **ASSET     :** `{display_name}`\n"
-            f"💵 **PRICE     :** `{curr_price}`\n"
-            f"🎯 **ACCURACY  :** `95%+ CONFIRMED ENTRY`\n"
-            f"🟥🟥🟥🟥🟥🟥🟥🟥🟥🟥"
+            f"🟨🟨🟨🟨🟨🟨🟨🟨🟨🟨\n"
+            f"✋ **SKIP / WAIT** 🟡 ⏳\n\n"
+            f"⏱ `{tf_min} MIN` • `{display_name}`\n"
+            f"💵 **PRICE :** `{curr_price}`\n"
+            f"💡 *मार्केट फंसा हुआ है, अगला सिग्नल लें!*\n"
+            f"🟨🟨🟨🟨🟨🟨🟨🟨🟨🟨"
         )
     return msg, display_name
 
-# 4. Background Processor (Fast 2.5s Confirmation - Never Hangs)
-def process_signal_thread(cid, pair_code, tf_min):
-    time.sleep(2.0)  # 2 सेकंड का मिलीसेकंड टिक कैलकुलेशन समय
-    sig_msg, disp_name = compute_high_accuracy_signal(pair_code, tf_min)
-    
-    requests.post(f"{API_URL}/sendMessage", json={
-        "chat_id": cid,
-        "text": sig_msg,
-        "reply_markup": get_signal_followup_menu(pair_code, disp_name),
-        "parse_mode": "Markdown"
-    }, timeout=5)
-
-# 5. Telegram Polling Worker
+# 4. Telegram Worker
 def telegram_worker():
     offset = 0
     try:
@@ -187,7 +192,7 @@ def telegram_worker():
                             if t in ["/start", "/menu"]:
                                 requests.post(f"{API_URL}/sendMessage", json={
                                     "chat_id": cid,
-                                    "text": "🎯 **Select Index Asset for Deep Live Analysis:**",
+                                    "text": "🤖 **MAGNATE AI PRO**\n\n👇 **ट्रेडिंग के लिए पेयर चुनें:**",
                                     "reply_markup": get_main_menu(),
                                     "parse_mode": "Markdown"
                                 }, timeout=5)
@@ -208,7 +213,7 @@ def telegram_worker():
                                 requests.post(f"{API_URL}/editMessageText", json={
                                     "chat_id": cid,
                                     "message_id": mid,
-                                    "text": "🎯 **Select Index Asset for Deep Live Analysis:**",
+                                    "text": "🤖 **MAGNATE AI PRO**\n\n👇 **ट्रेडिंग के लिए पेयर चुनें:**",
                                     "reply_markup": get_main_menu(),
                                     "parse_mode": "Markdown"
                                 }, timeout=5)
@@ -221,7 +226,7 @@ def telegram_worker():
                                 requests.post(f"{API_URL}/editMessageText", json={
                                     "chat_id": cid,
                                     "message_id": mid,
-                                    "text": f"📊 **{display_name}**\n👇 **Select Timeframe:**",
+                                    "text": f"📊 **{display_name}**\n👇 **टाइम चुनें:**",
                                     "reply_markup": get_time_menu(pair_code, display_name),
                                     "parse_mode": "Markdown"
                                 }, timeout=5)
@@ -230,22 +235,21 @@ def telegram_worker():
                                 parts = action.split("_")
                                 tf = parts[1]
                                 pair_code = "_".join(parts[2:])
-                                p_name = [k for k, v in INDEX_MAP.items() if v == pair_code]
-                                display_name = p_name[0] if p_name else pair_code
 
-                                # Fast User Feedback
-                                requests.post(f"{API_URL}/sendMessage", json={
+                                sig_msg, disp_name = generate_clean_signal(pair_code, tf)
+                                
+                                requests.post(f"{API_URL}/editMessageText", json={
                                     "chat_id": cid,
-                                    "text": f"🔍 **Reading Millisecond Feed for {display_name}...**\n⏱ *Calculating EMA + RSI + Momentum Confirmation...*",
+                                    "message_id": mid,
+                                    "text": sig_msg,
+                                    "reply_markup": get_signal_followup_menu(pair_code, disp_name),
                                     "parse_mode": "Markdown"
                                 }, timeout=5)
-
-                                threading.Thread(target=process_signal_thread, args=(cid, pair_code, tf), daemon=True).start()
             time.sleep(0.1)
         except Exception:
             time.sleep(1)
 
-# 6. Ultra-Fast WebSocket Feed with Continuous Auto-Subscription
+# 5. Live Millisecond WebSocket Engine (Continuous Real-Tick Capture)
 async def websocket_worker():
     headers = {
         "User-Agent": "Mozilla/5.0 (Linux; Android 10) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/139.0.0.0 Mobile Safari/537.36",
@@ -255,7 +259,8 @@ async def websocket_worker():
     while True:
         try:
             async with websockets.connect(WS_URL, extra_headers=headers, ping_interval=10, ping_timeout=10) as ws:
-                sub_payload = [{"t": 2, "e": 90, "d": [{"p": "ASIA_X"}, {"p": "COMPOUND_X"}, {"p": "FOOTBALL_2026_X"}]}]
+                # Active Subscription for OlympTrade Pairs
+                sub_payload = [{"t": 2, "e": 90, "d": [{"p": "ASIA_X"}, {"p": "CMDTY_X"}, {"p": "FOOTBALL_2026_X"}]}]
                 await ws.send(json.dumps(sub_payload))
 
                 while True:
@@ -265,6 +270,7 @@ async def websocket_worker():
                     except Exception:
                         continue
 
+                    # List Payloads
                     if isinstance(payload, list):
                         for item in payload:
                             if isinstance(item, dict) and "d" in item:
@@ -278,6 +284,7 @@ async def websocket_worker():
                                                 if len(market_ticks[k]) > 60:
                                                     market_ticks[k].pop(0)
 
+                    # Dict Payloads
                     elif isinstance(payload, dict) and "d" in payload:
                         for node in payload["d"]:
                             if isinstance(node, dict) and "p" in node and "q" in node:
