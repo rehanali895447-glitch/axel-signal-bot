@@ -4,13 +4,12 @@ import json
 import os
 import socketserver
 import threading
-import time
 import numpy as np
 import pandas as pd
 import requests
 import websockets
 
-# --- 1. Render Port Server (For 24/7 Uptime) ---
+# --- 1. Render Port Listener ---
 PORT = int(os.environ.get("PORT", 8080))
 
 
@@ -20,7 +19,7 @@ class ServerHandler(http.server.SimpleHTTPRequestHandler):
     self.send_response(200)
     self.send_header("Content-type", "text/plain")
     self.end_headers()
-    self.wfile.write(b"OlympTrade AI Signal Engine 24/7 Running")
+    self.wfile.write(b"Bot Server Active")
 
   def log_message(self, format, *args):
     return
@@ -36,7 +35,7 @@ def run_http_server():
 
 threading.Thread(target=run_http_server, daemon=True).start()
 
-# --- 2. Configurations & Pair Mappings ---
+# --- 2. Configurations & WebSocket URL ---
 TELEGRAM_BOT_TOKEN = "7979146076:AAGA4DhgxgWVcdeWBkaoa0ewWGWmPOv5OnQ"
 TELEGRAM_CHAT_ID = "6968099958"
 API_URL = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}"
@@ -67,8 +66,7 @@ price_history = []
 last_alert_type = None
 
 
-# --- 3. Telegram UI Helpers ---
-def get_main_menu_keyboard():
+def get_main_menu():
   buttons = []
   row = []
   for name, code in ASSETS_MAP.items():
@@ -81,58 +79,21 @@ def get_main_menu_keyboard():
   return {"inline_keyboard": buttons}
 
 
-def send_tg_message(chat_id, text, reply_markup=None):
-  payload = {"chat_id": chat_id, "text": text, "parse_mode": "Markdown"}
-  if reply_markup:
-    payload["reply_markup"] = reply_markup
-  try:
-    requests.post(f"{API_URL}/sendMessage", json=payload, timeout=5)
-  except Exception:
-    pass
-
-
-def edit_tg_message(chat_id, message_id, text, reply_markup=None):
-  payload = {
-      "chat_id": chat_id,
-      "message_id": message_id,
-      "text": text,
-      "parse_mode": "Markdown",
-  }
-  if reply_markup:
-    payload["reply_markup"] = reply_markup
-  try:
-    requests.post(f"{API_URL}/editMessageText", json=payload, timeout=5)
-  except Exception:
-    pass
-
-
-# --- 4. Signal Processing & Fast Logic ---
+# --- 3. Fast Signal Engine ---
 def check_signals(prices, pair_display_name):
   global last_alert_type
-  if len(prices) < 6:
+  if len(prices) < 5:
     return
 
   closes = np.array(prices, dtype=float)
-
-  # Exponential & Simple Moving Averages
-  ema_fast = (
-      pd.Series(closes).ewm(span=3, adjust=False).mean().iloc[-1]
-  )  # Fast EMA
-  ema_slow = (
-      pd.Series(closes).ewm(span=6, adjust=False).mean().iloc[-1]
-  )  # Slow EMA
-  sma_fast = pd.Series(closes).rolling(window=3, min_periods=1).mean().iloc[-1]
-
-  # Donchian Channel
-  dc_high = pd.Series(closes).rolling(window=6, min_periods=1).max().iloc[-1]
-  dc_low = pd.Series(closes).rolling(window=6, min_periods=1).min().iloc[-1]
+  ema_fast = pd.Series(closes).ewm(span=3, adjust=False).mean().iloc[-1]
+  ema_slow = pd.Series(closes).ewm(span=6, adjust=False).mean().iloc[-1]
+  dc_high = pd.Series(closes).rolling(window=5, min_periods=1).max().iloc[-1]
+  dc_low = pd.Series(closes).rolling(window=5, min_periods=1).min().iloc[-1]
   dc_mid = (dc_high + dc_low) / 2
-
-  # Rate of Change (Momentum)
   roc = ((closes[-1] - closes[-3]) / closes[-3]) * 100 if len(closes) >= 3 else 0
   curr = closes[-1]
 
-  # CALL & PUT Conditions
   is_call = (
       (curr >= dc_mid)
       and (curr >= ema_fast)
@@ -148,81 +109,109 @@ def check_signals(prices, pair_display_name):
 
   if is_call and last_alert_type != "CALL":
     last_alert_type = "CALL"
-    dispatch_alert(pair_display_name, "STRONG UP (CALL 🟢)", curr)
+    msg = (
+        f"🟢 **STRONG UP (CALL) ALERT** 🟢\n\n"
+        f"📊 **Asset:** `{pair_display_name}`\n"
+        f"🎯 **Direction:** CALL (1 Min Expiry)\n"
+        f"💵 **Price:** `{curr}`\n\n"
+        f"⚡ **Conditions Matched! Place Trade Now!**"
+    )
+    requests.post(
+        f"{API_URL}/sendMessage",
+        json={
+            "chat_id": TELEGRAM_CHAT_ID,
+            "text": msg,
+            "parse_mode": "Markdown",
+        },
+        timeout=5,
+    )
   elif is_put and last_alert_type != "PUT":
     last_alert_type = "PUT"
-    dispatch_alert(pair_display_name, "STRONG DOWN (PUT 🔴)", curr)
+    msg = (
+        f"🔴 **STRONG DOWN (PUT) ALERT** 🔴\n\n"
+        f"📊 **Asset:** `{pair_display_name}`\n"
+        f"🎯 **Direction:** PUT (1 Min Expiry)\n"
+        f"💵 **Price:** `{curr}`\n\n"
+        f"⚡ **Conditions Matched! Place Trade Now!**"
+    )
+    requests.post(
+        f"{API_URL}/sendMessage",
+        json={
+            "chat_id": TELEGRAM_CHAT_ID,
+            "text": msg,
+            "parse_mode": "Markdown",
+        },
+        timeout=5,
+    )
 
 
-def dispatch_alert(pair_name, direction, price):
-  emoji = "🟢" if "UP" in direction else "🔴"
-  msg = (
-      f"{emoji} **AI SCANNER SIGNAL CONFIRMED** {emoji}\n\n"
-      f"📊 **Asset:** `{pair_name}`\n"
-      f"🎯 **Action:** {direction}\n"
-      f"💵 **Entry Price:** `{price}`\n"
-      f"⏱ **Expiry:** 1 Minute\n\n"
-      f"⚡ **Conditions Matched: Place Trade Now!**"
-  )
-  send_tg_message(TELEGRAM_CHAT_ID, msg)
-
-
-# --- 5. Telegram Listener Loop (Zero Conflict Guaranteed) ---
+# --- 4. High-Speed Telegram Listener ---
 def telegram_worker():
   global current_pair, current_name, price_history, last_alert_type
   offset = 0
 
-  # Clean start: Clear any lingering sessions
-  try:
-    requests.get(
-        f"{API_URL}/deleteWebhook?drop_pending_updates=true", timeout=5
-    )
-  except Exception:
-    pass
+  requests.get(f"{API_URL}/deleteWebhook?drop_pending_updates=true", timeout=5)
 
   while True:
     try:
-      params = {"timeout": 15, "offset": offset}
-      res = requests.get(f"{API_URL}/getUpdates", params=params, timeout=20)
+      params = {"timeout": 10, "offset": offset}
+      res = requests.get(f"{API_URL}/getUpdates", params=params, timeout=15)
       if res.status_code == 200:
         data = res.json()
         if data.get("ok"):
           for update in data.get("result", []):
             offset = update["update_id"] + 1
 
-            # Commands: /start, /menu
             if "message" in update and "text" in update["message"]:
               t = update["message"]["text"]
               cid = update["message"]["chat"]["id"]
               if t in ["/start", "/menu"]:
                 menu_msg = (
-                    "🎯 **OlympTrade Live AI Scanner**\n\n"
-                    "👇 **जिस पेयर को स्कैन करना है उस पर क्लिक करें:**"
+                    "🎯 **OlympTrade Live AI Scanner**\n\n👇 **जिस पेयर को"
+                    " स्कैन करना है उस पर क्लिक करें:**"
                 )
-                send_tg_message(cid, menu_msg, get_main_menu_keyboard())
+                requests.post(
+                    f"{API_URL}/sendMessage",
+                    json={
+                        "chat_id": cid,
+                        "text": menu_msg,
+                        "reply_markup": get_main_menu(),
+                        "parse_mode": "Markdown",
+                    },
+                    timeout=5,
+                )
 
-            # Button Clicks
             elif "callback_query" in update:
               cb = update["callback_query"]
               cid = cb["message"]["chat"]["id"]
               mid = cb["message"]["message_id"]
+              cb_id = cb["id"]
               action = cb["data"]
 
-              try:
-                requests.post(
-                    f"{API_URL}/answerCallbackQuery",
-                    json={"callback_query_id": cb["id"]},
-                    timeout=3,
-                )
-              except Exception:
-                pass
+              # Instant Telegram Acknowledge
+              requests.post(
+                  f"{API_URL}/answerCallbackQuery",
+                  json={"callback_query_id": cb_id},
+                  timeout=3,
+              )
 
               if action == "BACK_MENU":
                 menu_msg = (
-                    "🎯 **OlympTrade Live AI Scanner**\n\n"
-                    "👇 **जिस पेयर को स्कैन करना है उस पर क्लिक करें:**"
+                    "🎯 **OlympTrade Live AI Scanner**\n\n👇 **जिस पेयर को"
+                    " स्कैन करना है उस पर क्लिक करें:**"
                 )
-                edit_tg_message(cid, mid, menu_msg, get_main_menu_keyboard())
+                requests.post(
+                    f"{API_URL}/editMessageText",
+                    json={
+                        "chat_id": cid,
+                        "message_id": mid,
+                        "text": menu_msg,
+                        "reply_markup": get_main_menu(),
+                        "parse_mode": "Markdown",
+                    },
+                    timeout=5,
+                )
+
               elif action in ASSETS_MAP.values():
                 current_pair = action
                 name_lookup = [
@@ -232,13 +221,13 @@ def telegram_worker():
                 price_history = []
                 last_alert_type = None
 
-                # 16 पेयर्स हटेंगे और सिर्फ एक्टिव डैशबोर्ड दिखेगा
+                # 16 पेयर्स तुरंत गायब होंगे और यह लाइव कार्ड दिखेगा
                 active_card = (
                     f"🚀 **स्कैनर एक्टिवेट हो चुका है!**\n\n"
                     f"📍 **एक्टिव पेयर:** `{current_name}` (`{current_pair}`)\n"
-                    f"📡 **लाइव स्टेटस:** 24/7 डेटा स्ट्रीम चालू है...\n"
-                    f"⏱ **टाइमफ्रेम:** 1 मिनट (Fast Engine)\n\n"
-                    f"⚡ जैसे ही सटीक एंट्री बनेगी, तुरंत नीचे मैसेज आ जाएगा।"
+                    f"📡 **लाइव स्टेटस:** 24/7 डेटा स्ट्रीम स्कैनिंग ऑन है...\n"
+                    f"⏱ **टाइमफ्रेम:** 1 मिनट AI Strategy\n\n"
+                    f"⚡ जैसे ही सिग्नल बनेगा, तुरंत नीचे अलर्ट भेजा जाएगा।"
                 )
                 back_nav = {
                     "inline_keyboard": [[{
@@ -246,16 +235,23 @@ def telegram_worker():
                         "callback_data": "BACK_MENU",
                     }]]
                 }
-                edit_tg_message(cid, mid, active_card, back_nav)
-      elif res.status_code == 409:
-        # Conflict recovery instantly without crash
-        time.sleep(3)
+                requests.post(
+                    f"{API_URL}/editMessageText",
+                    json={
+                        "chat_id": cid,
+                        "message_id": mid,
+                        "text": active_card,
+                        "reply_markup": back_nav,
+                        "parse_mode": "Markdown",
+                    },
+                    timeout=5,
+                )
     except Exception:
-      time.sleep(2)
+      pass
 
 
-# --- 6. OlympTrade WebSocket Engine ---
-async def stream_market_data():
+# --- 5. OlympTrade Live WebSocket Engine ---
+async def websocket_worker():
   global price_history, current_pair
   headers = {
       "User-Agent": (
@@ -273,7 +269,7 @@ async def stream_market_data():
           ping_interval=20,
           ping_timeout=20,
       ) as ws:
-        print("✅ OlympTrade Live Stream Connected!")
+        print("✅ WebSocket Stream Live!")
         while True:
           raw = await ws.recv()
           try:
@@ -292,16 +288,15 @@ async def stream_market_data():
                 ):
                   val = float(node["q"])
                   price_history.append(val)
-                  if len(price_history) > 60:
+                  if len(price_history) > 40:
                     price_history.pop(0)
 
                   check_signals(price_history, current_name)
-    except Exception as e:
-      await asyncio.sleep(3)
+    except Exception:
+      await asyncio.sleep(2)
 
 
-# --- 7. Execution Entrypoint ---
 if __name__ == "__main__":
   threading.Thread(target=telegram_worker, daemon=True).start()
-  asyncio.run(stream_market_data())
-    
+  asyncio.run(websocket_worker())
+                
